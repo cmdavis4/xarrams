@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xarrams"
+version = "0.1.0"
+description = "Utilities for working with RAMS atmospheric model output"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Charles Davis", email = "cmdavis4@colostate.edu"}
+]
+keywords = ["atmospheric-science", "rams", "meteorology", "modeling", "xarray"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "skyutils>=1.0.0",
+    "xarray",
+    "numpy",
+    "pandas",
+    "metpy",
+    "pint-xarray",
+    "pint",
+    "tqdm",
+    "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "black",
+    "ruff",
+    "mypy",
+]
+
+[project.urls]
+Homepage = "https://github.com/cmdavis4/xarrams"
+"Bug Tracker" = "https://github.com/cmdavis4/xarrams/issues"
+Documentation = "https://github.com/cmdavis4/xarrams#readme"
+"Source Code" = "https://github.com/cmdavis4/xarrams"
+
+[tool.setuptools]
+packages = ["xarrams"]
+
+[tool.setuptools.package-data]
+xarrams = ["py.typed", "data/*.csv", "data/*.txt"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38', 'py39', 'py310', 'py311']
+
+[tool.ruff]
+line-length = 88
+target-version = "py38"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

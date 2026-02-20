@@ -1,0 +1,64 @@
+[workspace]
+name = "xarrams"
+version = "0.1.0"
+description = "Utilities for working with RAMS atmospheric model output"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-64", "osx-arm64"]
+
+[dependencies]
+# Core required dependencies
+python = ">=3.8"
+pip = "*"
+numpy = "*"
+xarray = "*"
+pandas = "*"
+metpy = "*"
+pint = "*"
+pint-xarray = "*"
+tqdm = "*"
+matplotlib = "*"
+
+[feature.test.dependencies]
+# Testing tools
+pytest = ">=7.0"
+pytest-cov = "*"
+
+[feature.dev.dependencies]
+# Development tools
+black = "*"
+ruff = "*"
+mypy = "*"
+ipython = "*"
+jupyter = "*"
+
+[environments]
+# Minimal environment - core dependencies + testing
+minimal = {features = ["test"], solve-group = "minimal"}
+
+# Development environment - includes everything
+dev = {features = ["test", "dev"], solve-group = "dev"}
+
+[tasks]
+# Install the package in editable mode
+install = "pip install -e ."
+
+# Run all tests
+test = {cmd = "pytest tests/ -v", depends-on = ["install"]}
+
+# Run tests with coverage
+test-cov = {cmd = "pytest tests/ -v --cov=xarrams --cov-report=term-missing --cov-report=html", depends-on = ["install"]}
+
+# Format code
+format = "black xarrams/ tests/"
+
+# Lint code
+lint = "ruff check xarrams/ tests/"
+
+# Type check
+typecheck = "mypy xarrams/"
+
+# Run all quality checks
+check = {depends-on = ["format", "lint", "typecheck"]}
+
+# Clean up build artifacts and caches
+clean = "rm -rf build/ dist/ *.egg-info .pytest_cache/ .coverage .mypy_cache/ __pycache__/ xarrams/__pycache__/ tests/__pycache__/ htmlcov/"

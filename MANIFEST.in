@@ -1,0 +1,7 @@
+include README.md
+include LICENSE
+include pytest.ini
+recursive-include xarrams *.py
+include xarrams/py.typed
+include xarrams/data/*.csv
+include xarrams/data/*.txt
