@@ -1,8 +1,7 @@
 """RAMS simulation execution and RAMSIN configuration generation.
 
-Provides functions for generating RAMSIN configuration files from templates,
-running RAMS simulations (serial or MPI-parallel), and managing multi-run
-experiment directories.
+Provides functions for generating RAMSIN configuration files from templates
+and running RAMS simulations (serial or MPI-parallel).
 """
 
 from __future__ import annotations
@@ -14,7 +13,6 @@ from pathlib import Path
 from typing import Optional, Union
 
 from carlee_tools.types_carlee_tools import PathLike
-from carlee_tools.utils import current_dt_str
 
 # ---------------------------------------------------------------------------
 # Command templates
@@ -119,7 +117,7 @@ def generate_ramsin(
     return ramsin
 
 
-def run_rams_for_ramsin(
+def run_rams(
     ramsin_path: PathLike,
     stdout_path: PathLike,
     rams_executable_path: PathLike,
@@ -130,15 +128,20 @@ def run_rams_for_ramsin(
     asynchronous: bool = True,
     verbose: bool = True,
 ) -> Union[bool, subprocess.Popen, subprocess.CompletedProcess]:  # type: ignore[type-arg]
-    """Run RAMS for a single RAMSIN configuration.
+    """Run a RAMS simulation.
+
+    Launches the RAMS executable for a single RAMSIN configuration,
+    either in serial or MPI-parallel mode.  Optionally logs the command
+    and RAMSIN contents to the stdout capture file.
 
     Args:
-        ramsin_path: Path to the RAMSIN file.
+        ramsin_path: Path to the RAMSIN configuration file.
         stdout_path: File where RAMS stdout is captured.
         rams_executable_path: Path to the RAMS executable.
         machsfile_path: Machine file for MPI parallel execution.
             If ``None``, RAMS is run in serial.
-        log_command: Prepend the executed command to the stdout file.
+        log_command: Prepend the executed command (and executable checksum)
+            to the stdout file.
         log_ramsin: Prepend the RAMSIN contents to the stdout file.
         dry_run: If ``True``, skip execution and return ``True``.
         asynchronous: If ``True``, return a :class:`subprocess.Popen` handle
@@ -150,7 +153,8 @@ def run_rams_for_ramsin(
         or a :class:`subprocess.CompletedProcess` for synchronous runs.
 
     Raises:
-        ValueError: If the resolved RAMSIN path exceeds 256 characters.
+        ValueError: If the resolved RAMSIN path exceeds 256 characters
+            (a RAMS limitation).
     """
     if len(str(Path(ramsin_path).resolve())) > 256:
         raise ValueError("RAMS cannot handle ramsin paths longer than 256 characters")
@@ -219,118 +223,3 @@ def run_rams_for_ramsin(
             )
         else:
             return subprocess.run(command.split(" "), stdout=stdout_f)
-
-
-def run_rams(
-    parameter_sets_dict: dict[str, dict[str, str]],
-    run_dir: PathLike,
-    rams_executable_path: Union[PathLike, dict[str, PathLike]],
-    ramsin_template_path: PathLike,
-    nodelist: Optional[Union[list[str], dict[str, list[str]]]] = None,
-    log_command: bool = True,
-    log_ramsin: bool = True,
-    dry_run: bool = False,
-    parallel: bool = True,
-    block: bool = True,
-    date_filenames: bool = False,
-    verbose: bool = True,
-) -> list[Union[bool, subprocess.Popen]]:  # type: ignore[type-arg]
-    """Run RAMS simulations for one or more parameter sets.
-
-    Creates a directory structure under *run_dir*, generates RAMSIN files,
-    and launches RAMS processes.
-
-    Args:
-        parameter_sets_dict: Mapping of run names to parameter dictionaries.
-        run_dir: Base directory for all runs.
-        rams_executable_path: Path to the RAMS executable, or a dict mapping
-            run names to per-run executables.
-        ramsin_template_path: Template RAMSIN file.
-        nodelist: Node configuration for MPI runs.  A single list applies to
-            all runs; a dict maps run names to per-run nodelists.
-        log_command: Log the executed command in each stdout file.
-        log_ramsin: Log the RAMSIN contents in each stdout file.
-        dry_run: Skip actual execution.
-        parallel: Launch runs asynchronously.
-        block: If *parallel*, wait for all runs to finish before returning.
-        date_filenames: Append a timestamp to directory names.
-        verbose: Print progress information.
-
-    Returns:
-        List of process handles (or ``True`` for dry runs).
-
-    Raises:
-        ValueError: If *nodelist* keys don't match *parameter_sets_dict* keys.
-    """
-    run_dir = Path(run_dir)
-    run_dir.mkdir(parents=False, exist_ok=True)
-
-    fname_suffix = ("_dt-" + current_dt_str()) if date_filenames else ""
-
-    parameter_set_dirs: dict[str, dict[str, Path | None]] = {}
-    for parameter_set_name, parameters in parameter_sets_dict.items():
-        ps_dir = run_dir / (parameter_set_name + fname_suffix)
-        input_dir = ps_dir / "input"
-        output_dir = ps_dir / "output"
-        ps_dir.mkdir(parents=False, exist_ok=True)
-        input_dir.mkdir(parents=False, exist_ok=True)
-        output_dir.mkdir(parents=False, exist_ok=True)
-        parameter_set_dirs[parameter_set_name] = {"top": ps_dir}
-
-        generate_ramsin(
-            parameter_set_name + fname_suffix,
-            parameters,
-            rams_input_dir=str(input_dir),
-            rams_output_dir=str(output_dir),
-            ramsin_dir=str(ps_dir),
-            ramsin_template_path=ramsin_template_path,
-        )
-
-    if nodelist:
-        if isinstance(nodelist, dict):
-            if nodelist.keys() != parameter_sets_dict.keys():
-                raise ValueError(
-                    "If nodelist is a dict, its keys must match those of parameter_sets_dict exactly"
-                )
-        else:
-            nodelist = {name: nodelist for name in parameter_set_dirs}
-
-        for ps_name, ps_dir_info in parameter_set_dirs.items():
-            machsfile_path = ps_dir_info["top"] / f"{ps_name}_machsfile.master"
-            with machsfile_path.open("w") as f:
-                f.write("\n".join(nodelist[ps_name]))
-            ps_dir_info["machsfile"] = machsfile_path
-    else:
-        for ps_dir_info in parameter_set_dirs.values():
-            ps_dir_info["machsfile"] = None
-
-    run_results = []
-    for ps_name in parameter_sets_dict:
-        dirs = parameter_set_dirs[ps_name]
-        run_results.append(
-            run_rams_for_ramsin(
-                ramsin_path=str(dirs["top"] / f"RAMSIN.{ps_name}{fname_suffix}"),
-                stdout_path=str(dirs["top"] / f"{ps_name}{fname_suffix}.stdout"),
-                rams_executable_path=(
-                    rams_executable_path[ps_name]
-                    if isinstance(rams_executable_path, dict)
-                    else rams_executable_path
-                ),
-                machsfile_path=dirs["machsfile"],
-                log_command=log_command,
-                log_ramsin=log_ramsin,
-                dry_run=dry_run,
-                asynchronous=parallel,
-                verbose=verbose,
-            )
-        )
-
-    if parallel and block and not dry_run:
-        try:
-            for sp in run_results:
-                sp.wait()
-        finally:
-            for sp in run_results:
-                sp.kill()
-
-    return run_results

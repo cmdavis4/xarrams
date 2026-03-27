@@ -327,9 +327,9 @@ class TestGenerateRamsin:
             )
 
 
-class TestRunRamsForRamsin:
+class TestRunRams:
     def test_dry_run(self, tmp_path):
-        from xarrams import run_rams_for_ramsin
+        from xarrams import run_rams
 
         ramsin = tmp_path / "RAMSIN.test"
         ramsin.write_text("test")
@@ -337,7 +337,7 @@ class TestRunRamsForRamsin:
         exe = tmp_path / "rams"
         exe.write_text("#!/bin/bash\necho hello")
 
-        result = run_rams_for_ramsin(
+        result = run_rams(
             ramsin_path=ramsin,
             stdout_path=stdout,
             rams_executable_path=exe,
@@ -348,11 +348,11 @@ class TestRunRamsForRamsin:
         assert result is True
 
     def test_long_path_raises(self, tmp_path):
-        from xarrams import run_rams_for_ramsin
+        from xarrams import run_rams
 
         long_path = tmp_path / ("x" * 300)
         with pytest.raises(ValueError, match="256 characters"):
-            run_rams_for_ramsin(
+            run_rams(
                 ramsin_path=long_path,
                 stdout_path=tmp_path / "out",
                 rams_executable_path=tmp_path / "exe",

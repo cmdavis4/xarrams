@@ -41,7 +41,6 @@ from .execution import (
     generate_ramsin,
     ramsin_str,
     run_rams,
-    run_rams_for_ramsin,
 )
 
 # --- Calculations ------------------------------------------------------------
@@ -95,7 +94,6 @@ __all__ = [
     "generate_ramsin",
     "ramsin_str",
     "run_rams",
-    "run_rams_for_ramsin",
     # Calculations
     "calculate_bsr_variables",
     "calculate_derived_variables",
