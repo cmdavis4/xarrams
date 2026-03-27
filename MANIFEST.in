@@ -5,3 +5,4 @@ recursive-include xarrams *.py
 include xarrams/py.typed
 include xarrams/data/*.csv
 include xarrams/data/*.txt
+include xarrams/templates/*.sh
