@@ -1,8 +1,17 @@
+"""SLURM submission script generation for RAMS simulations.
+
+Renders a Jinja2 template to produce a ready-to-submit SLURM batch script.
+"""
+
+from __future__ import annotations
+
 from pathlib import Path
 
 import jinja2
 
-from carlee_tools import PathLike
+from carlee_tools.types_carlee_tools import PathLike
+
+_DEFAULT_TEMPLATE = Path(__file__).parent / "templates" / "cumulus_rams_slurm_submission_template.sh"
 
 
 def generate_slurm_submission_script(
@@ -11,35 +20,44 @@ def generate_slurm_submission_script(
     project_code: str,
     user_email: str,
     memory: str = "0",
-    template_path=Path(__file__).parent
-    / "templates"
-    / "cumulus_rams_slurm_submission_template.sh",
-    output_filename="submit_slurm.sh",
+    template_path: PathLike = _DEFAULT_TEMPLATE,
+    output_filename: str = "submit_slurm.sh",
     walltime_str: str = "06:00:00",
     n_nodes: int = 1,
     queue: str = "batch_short",
-):
-    # Convert run_dir to path
+) -> None:
+    """Generate a SLURM submission script for a RAMS simulation.
+
+    Args:
+        run_dir: Directory for this simulation run. The script and a
+            ``stdout/`` subdirectory are created here.
+        rams_executable_path: Path to the RAMS executable.
+        project_code: HPC project/allocation code.
+        user_email: Email address for job notifications.
+        memory: Memory request string (``"0"`` for default).
+        template_path: Path to the Jinja2 SLURM template.
+        output_filename: Name of the generated script file.
+        walltime_str: Walltime in ``HH:MM:SS`` format.
+        n_nodes: Number of compute nodes.
+        queue: SLURM partition/queue name.
+    """
     run_dir = Path(run_dir)
     run_name = run_dir.stem
 
-    template_loader = jinja2.FileSystemLoader(searchpath="/")
     template_env = jinja2.Environment(
-        loader=template_loader, undefined=jinja2.StrictUndefined
+        loader=jinja2.FileSystemLoader(searchpath="/"),
+        undefined=jinja2.StrictUndefined,
     )
+    template = template_env.get_template(str(template_path))
 
-    pbs_submission_template = template_env.get_template(template_path)
-
-    # Number of cores is 128*number of nodes
     n_cores = 128 * n_nodes
 
-    # Make a stdout dir if it doesn't exist
-    stdout_dir = run_dir.joinpath("stdout")
+    stdout_dir = run_dir / "stdout"
     stdout_dir.mkdir(exist_ok=True)
 
-    ramsin_path = Path(run_dir).joinpath(f"RAMSIN.{run_name}")
+    ramsin_path = run_dir / f"RAMSIN.{run_name}"
 
-    rendered_submission_script = pbs_submission_template.render({
+    rendered = template.render({
         "queue": queue,
         "user_email": user_email,
         "project_code": project_code,
@@ -52,5 +70,5 @@ def generate_slurm_submission_script(
         "rams_executable_path": rams_executable_path,
         "ramsin_path": ramsin_path,
     })
-    with (run_dir / output_filename).open("w") as f:
-        f.write(rendered_submission_script)
+
+    (run_dir / output_filename).write_text(rendered)

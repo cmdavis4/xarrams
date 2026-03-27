@@ -73,7 +73,6 @@ def build_rams_from_template(
             raise ``jinja2.UndefinedError``.
         make: Whether to compile the code. Defaults to True.
         make_clean: Whether to run ``make clean`` before building. Defaults to True.
-        delete_if_exists: Whether to delete and re-copy if dest already exists.
 
     Returns:
         Path to the compiled RAMS executable.
