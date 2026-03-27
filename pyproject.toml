@@ -27,7 +27,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "skyutils>=1.0.0",
+    "carlee-tools>=1.1.0",
     "xarray",
     "numpy",
     "pandas",
