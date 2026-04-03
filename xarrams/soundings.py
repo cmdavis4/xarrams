@@ -6,7 +6,7 @@ and utilities for writing soundings in RAMS-compatible format.
 
 from __future__ import annotations
 
-from typing import Optional, Union
+from typing import Optional, Union, List
 
 import matplotlib.pyplot as plt
 import metpy.calc as mpc
@@ -21,27 +21,29 @@ from carlee_tools.types_carlee_tools import PathLike
 from .constants import SOUNDING_NAMELIST_VARIABLES
 
 
-def format_sounding_field_ramsin_str(values: Union[list[float], np.ndarray]) -> str:
-    """Format sounding field values as a RAMSIN-compatible string.
-
-    Produces a comma-separated multi-line string with 5 values per line,
-    suitable for direct inclusion in a RAMSIN namelist.
+def format_sounding_field_ramsin_str(
+    values: Union[List[float], np.ndarray], decimal_places: int = 4
+) -> str:
+    """Format sounding field values as RAMSIN-compatible string.
 
     Args:
-        values: Numeric values to format.
+        values: Array of values for a sounding field
+        decimal_places: Number of decimal places to use in formatting (default: 4)
 
     Returns:
-        Formatted string.
+        Formatted string suitable for RAMSIN files
     """
-    values = np.asarray(values, dtype=float)
-    return ",\n          ".join(
+    values = np.array(values)
+    format_str = f"%.{decimal_places}f"
+
+    return ",\n          ".join([
         np.array2string(
             values[ix : ix + 5],
-            formatter={"float_kind": lambda x: "%.4f" % x},
-            separator=",    ",
+            formatter={"float_kind": lambda x: format_str % x},
+            separator=", ",
         )[1:-1]
         for ix in range(0, len(values), 5)
-    )
+    ])
 
 
 def with_updated_sounding_fields(
@@ -69,7 +71,10 @@ def with_updated_sounding_fields(
         "VS": format_sounding_field_ramsin_str(sounding["VS"].values),
     })
     if update_sounding_field_flags:
-        print("Setting pressures to mb, temps to °C, RHs to percent, wind to U and V components")
+        print(
+            "Setting pressures to mb, temps to °C, RHs to percent, wind to U and V"
+            " components"
+        )
         this_param_set.update({
             "IPSFLG": "0",
             "ITSFLG": "0",
@@ -96,9 +101,13 @@ def write_rams_formatted_sounding(
             monotonically decreasing with unique values.
     """
     if not all(x in df.columns for x in SOUNDING_NAMELIST_VARIABLES):
-        raise ValueError(f"Sounding dataframe must contain columns {SOUNDING_NAMELIST_VARIABLES}")
+        raise ValueError(
+            f"Sounding dataframe must contain columns {SOUNDING_NAMELIST_VARIABLES}"
+        )
     if not (df["PS"].is_monotonic_decreasing and df["PS"].nunique() == len(df)):
-        raise ValueError("'PS' field must be monotonically decreasing with no duplicate values")
+        raise ValueError(
+            "'PS' field must be monotonically decreasing with no duplicate values"
+        )
 
     output_paths = [output_path]
     if second_copy:
@@ -115,7 +124,7 @@ def write_rams_formatted_sounding(
 
 
 def plot_sounding(
-    column_ds: xr.Dataset,
+    column_df: pd.DataFrame,
     barbs: bool = True,
 ) -> plt.Figure:
     """Plot a SkewT diagram (with optional hodograph) from a vertical column.
@@ -134,26 +143,30 @@ def plot_sounding(
     from metpy.plots import Hodograph, SkewT
     from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-    if "z" not in column_ds.dims or len(column_ds.dims) != 1:
-        raise ValueError(
-            f'column_ds must have exactly one dimension named "z", but has: {column_ds.dims}'
-        )
-
-    column_df = column_ds.to_dataframe().reset_index()
     column_df = column_df[column_df["z"] >= 0].sort_values("z")
 
     fig = plt.figure()
     skewt = SkewT(fig, rotation=30)
-    skewt.plot(column_df["P"], column_df["T"] - 273.15, "r")
-    skewt.plot(column_df["P"], column_df["dewpoint"] - 273.15, "blue")
+    skewt.plot(column_df["PS"], column_df["TS"], "r")
+    # Calculate the dewpoint
+    if "dewpoint" not in column_df.columns:
+        column_df["dewpoint"] = (
+            mpc.dewpoint_from_relative_humidity(
+                temperature=column_df["TS"].values * units("degC"),
+                relative_humidity=column_df["RTS"].to_numpy(dtype=float) / 100,
+            )
+            .to("degC")
+            .magnitude
+        )
+    skewt.plot(column_df["PS"].values, column_df["dewpoint"].values, "blue")
 
     wk_parcel_path = mpc.parcel_profile(
-        column_df["P"].values * units("hPa"),
-        column_df["T"].iloc[0] * units("K"),
-        column_df["dewpoint"].iloc[0] * units("K"),
+        column_df["PS"].values * units("hPa"),
+        column_df["TS"].iloc[0].item() * units("K"),
+        column_df["dewpoint"].iloc[0].item() * units("degC"),
     )
     skewt.plot(
-        column_df["P"],
+        column_df["PS"],
         wk_parcel_path,
         color="grey",
         linestyle="dashed",
@@ -164,20 +177,20 @@ def plot_sounding(
     if barbs:
         coarsened = column_df.iloc[::4]
         skewt.plot_barbs(
-            pressure=coarsened["P"] * units("hPa"),
-            u=coarsened["UC"] * units("m/s"),
-            v=coarsened["VC"] * units("m/s"),
+            pressure=coarsened["PS"] * units("hPa"),
+            u=coarsened["US"] * units("m/s"),
+            v=coarsened["VS"] * units("m/s"),
         )
     else:
         ax_hod = inset_axes(skewt.ax, "40%", "40%", loc=1)
-        component_range = max(column_df["UC"].max(), column_df["VC"].max()) + 1
+        component_range = max(column_df["US"].max(), column_df["VS"].max()) + 1
         h = Hodograph(ax_hod, component_range=component_range)
         h.add_grid(increment=10)
-        h.plot_colormapped(column_df["UC"], column_df["VC"], column_df["z"])
+        h.plot_colormapped(column_df["US"], column_df["VS"], column_df["z"])
 
     # Dual-label y-axis with pressure and height
     p_ticks = skewt.ax.get_yticks()
-    z_at_ticks = np.interp(p_ticks, column_df["P"][::-1], column_df["z"][::-1])
+    z_at_ticks = np.interp(p_ticks, column_df["PS"][::-1], column_df["z"][::-1])
     new_labels = []
     for p, z in zip(p_ticks, z_at_ticks):
         height_str = f"{z / 1000:.1f} km" if z >= 1000 else f"{int(z)} m"
@@ -190,9 +203,9 @@ def plot_sounding(
 def wk84_sounding(
     U_s: float,
     q_v0: float,
-    shear_layer_depth: float,
     veering: bool,
     z_levels: Union[np.ndarray, list[float]],
+    shear_layer_depth: float = 4000,
     z_tropopause: float = 12_000,
     theta_tropopause: float = 343,
     T_tropopause: float = 213,
@@ -253,7 +266,11 @@ def wk84_sounding(
         wk_zs <= z_tropopause,
         theta_0 + (theta_tropopause - theta_0) * (wk_zs / z_tropopause) ** (5.0 / 4),
         theta_tropopause
-        * np.exp(mpconstants.earth_gravity * (wk_zs - z_tropopause) / (C_p * T_tropopause)),
+        * np.exp(
+            mpconstants.earth_gravity.to("m/s^2").magnitude
+            * (wk_zs - z_tropopause)
+            / (C_p * T_tropopause)
+        ),
     )
 
     p_idx_900hpa = np.argmin(np.abs(wk_ps - 900 * units("hPa")))
@@ -265,9 +282,13 @@ def wk84_sounding(
         0.25,
     )
 
-    wk_Ts = mpc.temperature_from_potential_temperature(wk_ps, wk_theta * units("K")).to("degC")
+    wk_Ts = mpc.temperature_from_potential_temperature(wk_ps, wk_theta * units("K")).to(
+        "degC"
+    )
 
-    q_v0_rhs = mpc.relative_humidity_from_mixing_ratio(wk_ps, wk_Ts, q_v0 * units("g/kg")).to("")
+    q_v0_rhs = mpc.relative_humidity_from_mixing_ratio(
+        wk_ps, wk_Ts, q_v0 * units("g/kg")
+    ).to("")
     wk_rhs = np.where(q_v0_rhs < 1, q_v0_rhs, wk_rhs)
 
     wk_df = pd.DataFrame({
@@ -280,9 +301,9 @@ def wk84_sounding(
 
     return pd.DataFrame({
         "z": z_levels,
-        "P": np.interp(z_levels, wk_zs, wk_df["PS"]),
-        "T": np.interp(z_levels, wk_zs, wk_df["TS"]),
-        "RH": np.interp(z_levels, wk_zs, wk_df["RTS"]),
-        "U": np.interp(z_levels, wk_zs, wk_df["US"]),
-        "V": np.interp(z_levels, wk_zs, wk_df["VS"]),
+        "PS": np.interp(z_levels, wk_zs, wk_df["PS"]),
+        "TS": np.interp(z_levels, wk_zs, wk_df["TS"]),
+        "RTS": np.interp(z_levels, wk_zs, wk_df["RTS"]),
+        "US": np.interp(z_levels, wk_zs, wk_df["US"]),
+        "VS": np.interp(z_levels, wk_zs, wk_df["VS"]),
     })
