@@ -44,13 +44,25 @@ def ramsin_str(s: object) -> str:
     return f"'{s}'"
 
 
+def build_rams_directory_structure(base_dir: PathLike):
+    base_dir = Path(base_dir)
+    base_dir.mkdir(exist_ok=True, parents=False)
+
+    (base_dir / "input").mkdir(exist_ok=True, parents=False)
+    (base_dir / "output").mkdir(exist_ok=True, parents=False)
+    (base_dir / "derived").mkdir(exist_ok=True, parents=False)
+    (base_dir / "stdout").mkdir(exist_ok=True, parents=False)
+
+    return base_dir
+
+
 def generate_ramsin(
     ramsin_name: str,
     parameters: dict[str, str],
-    rams_input_dir: Optional[PathLike],
-    rams_output_dir: Optional[PathLike],
     ramsin_dir: PathLike,
     ramsin_template_path: PathLike,
+    rams_input_dir: Optional[PathLike],
+    rams_output_dir: Optional[PathLike],
 ) -> str:
     """Generate a RAMSIN configuration file from a template.
 

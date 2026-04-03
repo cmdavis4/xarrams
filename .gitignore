@@ -114,4 +114,4 @@ dmypy.json
 # Test outputs
 test_outputs/
 figures/
-data/
+test_data/
