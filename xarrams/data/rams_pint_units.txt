@@ -1,0 +1,10 @@
+# This somehow owrks for making all of these aliases to unitless, including the
+# blank space after the unitless definition
+# Who knows!
+fraction = unitless
+Bin = unitless
+unitless = 
+# From a typo in the units in the docs; also had to correct one "Kg" to "kg", but didn't
+# want to include that in here since that's genuinely ambiguous
+Pascal = pascal
+dΘ = delta_kelvin

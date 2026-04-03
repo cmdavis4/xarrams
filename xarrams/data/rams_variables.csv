@@ -1,0 +1,420 @@
+,name,dimensions,units,description
+0,GLAT,"nx,ny",deg,Latitude
+1,GLON,"nx,ny",deg,Longitude
+2,TOPT,"nx,ny",m,topography height
+3,TOPZO,"nx,ny",m,topographic roughness length
+4,PI,"nx,ny,nz",J/(kg*K),"PI = Exner function * Cp, where(Cp=1004 J/kg/K in RAMS)
+Exner-function = T/Θ =
+(p/p00)^(Rd/Cp)"
+5,PI0,"nx,ny,nz",J/(kg*K),(INPUT) reference state PI
+6,UP,"nx,ny,nz",m/s,Past U (zonal) wind component
+7,VP,"nx,ny,nz",m/s,"Past V (meridional) windcomponent"
+8,WP,"nx,ny,nz",m/s,"Past W (vertical) windcomponent"
+9,PP,"nx,ny,nz",J/(kg*K),"Past perturbation Exnerfunction (PI-prime)"
+10,UC,"nx,ny,nz",m/s,Current U wind component
+11,VC,"nx,ny,nz",m/s,Current V wind component
+12,WC,"nx,ny,nz",m/s,Current W wind component
+13,PC,"nx,ny,nz",J/(kg*K),"Current perturbation Exnerfunction (PI-prime)"
+14,THP,"nx,ny,nz",K,"Theta-IL, ice-liquid potentialtemperature (prognostic
+variable)"
+15,RTP,"nx,ny,nz",kg/kg,"Total water mixing ratio (watervapor + condensate)
+(prognostic variable)"
+16,THETA,"nx,ny,nz",K,"Theta, potential temperature"
+17,RV,"nx,ny,nz",kg/kg,Water vapor mixing ratio
+18,DN0,"nx,ny,nz",kg/m^3,"reference state air density(Used by both LEAF & SIB)
+(LEAF always runs PATCH=1, which is water/ocean)"
+19,SOIL_TEXT,"nx,ny,nzg,np",#,dominant soil textural class
+20,LEAF_CLASS,"nx,ny,np",#,vegetation class
+21,PATCH_AREA,"nx,ny,np",fraction,patch fractional area
+22,VEG_NDVIP,"nx,ny,np",#,"past NDVI (NDVI = NormalizedDifference Vegetation Index)"
+23,VEG_NDVIC,"nx,ny,np",#,current NDVI
+24,VEG_NDVIF,"nx,ny,np",#,"future NDVI(Diagnostic for both)"
+25,PATCH_ROUGH,"nx,ny,np",m,net roughness
+26,SOIL_ROUGH,"nx,ny,np",m,soil roughness
+27,VEG_FRACAREA,"nx,ny,np",fraction,vegetation fractional area
+28,VEG_LAI,"nx,ny,np",m^2/m^2,green leaf area index
+29,VEG_TAI,"nx,ny,np",m^2/m^2,total leaf area index
+30,VEG_ROUGH,"nx,ny,np",m,vegetation roughness length
+31,VEG_HEIGHT,"nx,ny,np",m,vegetation / canopy height
+32,VEG_ALBEDO,"nx,ny,np",fraction,"vegetation albedo(Prognostic for both)"
+33,SOIL_WATER,"nx,ny,nzg,np",m^3/m^3,volumetric soil moisture
+34,SOIL_ENERGY,"nx,ny,nzg,np",J/kg,"soil energy (used to computesoil temperature)"
+35,SFCWATER_NLEV,"nx,ny,np",#,"number of snow (or surfacewater) levels"
+36,SFCWATER_MASS,"nx,ny,nzs,np",kg/m^2,"surface water mass (snow +surface water)"
+37,SFCWATER_ENERGY,"nx,ny,nzs,np",J/m^3,"surface water energy (used tocompute surface water
+temperature)"
+38,SFCWATER_DEPTH,"nx,ny,nzs,np",m,surface water depth
+39,USTAR,"nx,ny,np",m/s,ustar
+40,TSTAR,"nx,ny,np",K,tstar
+41,RSTAR,"nx,ny,np",kg/kg,rstar
+42,STOM_RESIST,"nx,ny,np",s/m,leaf stomatal resistance
+43,VEG_WATER,"nx,ny,np",kg/m^2,vegetation moisture
+44,VEG_TEMP,"nx,ny,np",K,vegetation temperature
+45,CAN_RVAP,"nx,ny,np",kg/kg,canopy mixing ratio
+46,CAN_TEMP,"nx,ny,np",K,canopy temperature
+47,GROUND_RSAT,"nx,ny,np",kg/kg,"saturation mixing ratio of thetop soil/snow surface"
+48,GROUND_RVAP,"nx,ny,np",kg/kg,"Without snowcover,ground_rvap is the effective
+saturation mixing ratio of soil
+(CAS = Canopy Air Space)"
+49,RCO2P,"nz,nx,ny",mass,"fraction CO2 concentration (divide by1.51724e-6 to get CO2 in ppm)
+(1.51e-6 = 44(g/mol) /
+(29g/mol) / 1.e6) where CO2
+molar mass = 44 g/mol and Air
+molar mass = 29g/mol"
+50,SNOW1,"nx,ny,np",kg/m^2,vegetation snow
+51,SNOW2,"nx,ny,np",kg/m^2,ground surface snow
+52,CAPAC1,"nx,ny,np",kg/m^2,vegetation liquid store
+53,CAPAC2,"nx,ny,np",kg/m^2,ground surface liquid store
+54,PCO2AP,"nx,ny,np",Pa,"canopy air space CO2concentration"
+55,CO2FLX,"nx,ny,np",mol/m^2/s,"surface CO2 flux (CAS to firstatmospheric level) a.k.a. Net
+Ecosystem Exchange (NEE)"
+56,SFCSWA,"nx,ny,np",fraction,surface albedo
+57,UPLWRF,"nx,ny,np",W/m^2,"surface longwave upwardradiation"
+58,ASSIMN,"nx,ny,np",umol/m^2/s,uptake of CO2 by canopy plants
+59,RESPG,"nx,ny,np",umol/m^2/s,ground respiration flux
+60,RSTFAC1,"nx,ny,np",#,"(0->1) leaf-surface humidityresistance stress"
+61,RSTFAC2,"nx,ny,np",#,(0->1) soil moisture resistance stress
+62,RSTFAC3,"nx,ny,np",#,(0->1) temperature resistance stress
+63,ECT,"nx,ny,np",W/m^2,transpiration flux
+64,ECI,"nx,ny,np",W/m^2,canopy interception flux
+65,EGI,"nx,ny,np",W/m^2,ground interception flux
+66,EGS,"nx,ny,np",W/m^2,"ground surface layerevaporation"
+67,HC,"nx,ny,np",W/m^2,canopy (veg) sensible heat flux
+68,HG,"nx,ny,np",W/m^2,"ground surface sensible heatflux"
+69,RA,"nx,ny,np",s/m,"CAS to lowest atmos layeraerodynamic resistance"
+70,RB,"nx,ny,np",s/m,"leaf surface to CASaerodynamic resistance"
+71,RC,"nx,ny,np",s/m,total canopy resistance
+72,RD,"nx,ny,np",s/m,"ground to CAS aerodynamicresistance"
+73,ROFF,"nx,ny,np",mm,"water runoff (surface andsubsurface)"
+74,GREEN,"nx,ny,np",fraction,greenness fraction
+75,APAR,"nx,ny,np",fraction,"absorbed fraction ofphotosynthetically active
+radiation"
+76,VENTMF,"nx,ny,np",kg/m^2/s,ventilation mass flux
+77,PCO2C,"nx,ny,np",Pa,"leaf chloroplast CO2concentration"
+78,PCO2I,"nx,ny,np",Pa,leaf internal CO2 concentration
+79,PCO2S,"nx,ny,np",Pa,leaf surface CO2 concentration
+80,PCO2M,"nx,ny,np",Pa,"lowest atmospheric level CO2concentration"
+81,EA,"nx,ny,np",hPa,canopy water vapor pressure
+82,EM,"nx,ny,np",hPa,reference level vapor pressure
+83,RHA,"nx,ny,np",fraction,CAS relative humidity
+84,RADVBC,"nx,ny,np",W/m^2,visible direct radiation
+85,RADVDC,"nx,ny,np",W/m^2,visible diffuse radiation
+86,RADNBC,"nx,ny,np",W/m^2,near infrared direct radiation
+87,RADNDC,"nx,ny,np",W/m^2,near infrared diffuse radiation
+88,PSY,"nx,ny,np",hPa/deg,"psychrometric constantNUMBER CONCENTRATION, ENERGY"
+89,SBM,pectral,Bin,"Model, mixr = mixing ratio"
+90,RCP,"nx,ny,nz",kg/kg,cloud mixing ratio
+91,RDP,"nx,ny,nz",kg/kg,drizzle mixing ratio
+92,RRP,"nx,ny,nz",kg/kg,rain mixing ratio
+93,RPP,"nx,ny,nz",kg/kg,pristine ice mixing ratio
+94,RSP,"nx,ny,nz",kg/kg,snow mixing ratio
+95,RAP,"nx,ny,nz",kg/kg,aggregates mixing ratio
+96,RGP,"nx,ny,nz",kg/kg,graupel mixing ratio
+97,RHP,"nx,ny,nz",kg/kg,hail mixing ratio
+98,RIPP,"nx,ny,nz",kg/kg,plates mixing ratio (SBM only)
+99,RICP,"nx,ny,nz",kg/kg,"columns mixing ratio (SBMonly)"
+100,RIDP,"nx,ny,nz",kg/kg,"dendrite mixing ratio (SBMonly)"
+101,CCP,"nx,ny,nz",#/kg,"cloud droplet numberconcentration"
+102,CDP,"nx,ny,nz",#/kg,"drizzle droplet numberconcentration"
+103,CRP,"nx,ny,nz",#/kg,"rain drop numberconcentration"
+104,CPP,"nx,ny,nz",#/kg,"pristine ice particle numberconcentration"
+105,CSP,"nx,ny,nz",#/kg,"snow particle numberconcentration"
+106,CAP,"nx,ny,nz",#/kg,"aggregates numberconcentration"
+107,CGP,"nx,ny,nz",#/kg,"graupel particle numberconcentration"
+108,CHP,"nx,ny,nz",#/kg,"hailstone numberconcentration"
+109,CIPP,"nx,ny,nz",#/kg,"plates number concentration(SBM only)"
+110,CICP,"nx,ny,nz",#/kg,"columns number concentration(SBM only)"
+111,CIDP,"nx,ny,nz",#/kg,"dendrites numberconcentration (SBM only)"
+112,Q2,"nx,ny,nz",J/kg,rain internal energy
+113,Q6,"nx,ny,nz",J/kg,graupel internal energy
+114,Q7,"nx,ny,nz",J/kg,hail internal energy
+115,FFCD,"nx,ny,nz,nkr",kg/kg,"cloud mixing ratio distribution(SBM only) (d(mixr)/dln(r))"
+116,FFIP,"nx,ny,nz,nkr",kg/kg,"plates mixing ratio distribution(SBM only) (d(mixr)/dln(r))"
+117,FFIC,"nx,ny,nz,nkr",kg/kg,"columns mixing ratiodistribution (SBM only)
+(d(mixr)/dln(r))"
+118,FFID,"nx,ny,nz,nkr",kg/kg,"dendrites mixing ratiodistribution (SBM only)
+(d(mixr)/dln(r))"
+119,FFSN,"nx,ny,nz,nkr",kg/kg,"aggregates mixing ratiodistribution (SBM only)
+(d(mixr)/dln(r))"
+120,FFGL,"nx,ny,nz,nkr",kg/kg,"graupel mixing ratiodistribution (SBM only)
+(d(mixr)/dln(r))"
+121,FFHL,"nx,ny,nz,nkr",kg/kg,"hail mixing ratio distribution(SBM only) (d(mixr)/dln(r))
+NUMBER CONCENTRATION"
+122,CCCNP,"nx,ny,nz",#/kg,ccn number concentration
+123,GCCNP,"nx,ny,nz",#/kg,gccn number concentration
+124,DUSTFRAC,"nx,ny",fraction,Grid cell dust erodible fraction
+125,MD1NP,"nx,ny,nz",#/kg,"sub-micron dust numberconcentration"
+126,MD2NP,"nx,ny,nz",#/kg,"super-micron dust numberconcentration"
+127,ABC1NP,"nx,ny,nz",#/kg,"Absorbing carbon (1% BC,99% OC) number
+concentration"
+128,ABC2NP,"nx,ny,nz",#/kg,"Absorbing carbon (2% BC,98% OC) number
+concentration"
+129,SALT_FILM_NP,"nx,ny,nz",#/kg,"sea-salt film drop numberconcentration"
+130,SALT_JET_NP,"nx,ny,nz",#/kg,"sea-salt jet drop numberconcentration"
+131,SALT_SPUM_NP,"nx,ny,nz",#/kg,"sea-salt spume drop numberconcentration"
+132,REGEN_AERO1_NP,"nx,ny,nz",#/kg,"sub-micron regeneratedaerosol number concentration"
+133,REGEN_AERO2_NP,"nx,ny,nz",#/kg,"super-micron regeneratedaerosol number concentration"
+134,CCCMP,"nx,ny,nz",kg/kg,ccn mass mixing ratio
+135,GCCMP,"nx,ny,nz",kg/kg,gccn mass mixing ratio
+136,MD1MP,"nx,ny,nz",kg/kg,"sub-micron dust mass mixingratio"
+137,MD2MP,"nx,ny,nz",kg/kg,"super-micron dust massmixing ratio"
+138,ABC1MP,"nx,ny,nz",#/kg,"Absorbing carbon (1% BC,99% OC) mass mixing ratio"
+139,ABC2MP,"nx,ny,nz",#/kg,"Absorbing carbon (2% BC,98% OC) mass mixing ratio"
+140,SALT_FILM_MP,"nx,ny,nz",kg/kg,"sea-salt film drop mass mixingratio"
+141,SALT_JET_MP,"nx,ny,nz",kg/kg,"sea-salt jet drop mass mixingratio"
+142,SALT_SPUM_MP,"nx,ny,nz",kg/kg,"sea-salt spume drop massmixing ratio"
+143,REGEN_AERO1_MP,"nx,ny,nz",kg/kg,"sub-micron regeneratedaerosol mass mixing ratio"
+144,REGEN_AERO2_MP,"nx,ny,nz",kg/kg,"super-micron regeneratedaerosol mass mixing ratio"
+145,CIFNP,"nx,ny,nz",#/kg,"ice nuclei numberconcentration
+(Meyers/DeMott-limited
+schemes)"
+146,RIFNP,"nx,ny,nz",kg/kg,"ice nuclei mass concentration(SBM CNT scheme)"
+147,FNCN,"nx,ny,nz,nkr",kg/kg,"ccn mass mixing ratiodistribution (SBM-only)
+(d(mixr)/dln(r))"
+148,FFIN,"nx,ny,nz,nkr",kg/kg,"ccn mass mixing ratiodistribution (SBM only)
+(d(mixr)/dln(r))"
+149,IFNNUCP,"nx,ny,nz",#/kg,ice nuclei already nucleated
+150,IMMERCP,"nx,ny,nz",#/kg,"ice nuclei within clouddroplets"
+151,IMMERDP,"nx,ny,nz",#/kg,"ice nuclei within drizzledroplets"
+152,IMMERRP,"nx,ny,nz",#/kg,ice nuclei within rain droplets
+153,CNMCP,"nx,ny,nz",kg/kg,"total aerosol mass withincloud droplets"
+154,CNMDP,"nx,ny,nz",kg/kg,"total aerosol mass withindrizzle"
+155,CNMRP,"nx,ny,nz",kg/kg,total aerosol mass within rain
+156,CNMPP,"nx,ny,nz",kg/kg,"total aerosol mass withinpristine ice"
+157,CNMSP,"nx,ny,nz",kg/kg,total aerosol mass within snow
+158,CNMAP,"nx,ny,nz",kg/kg,"total aerosol mass withinaggregates"
+159,CNMGP,"nx,ny,nz",kg/kg,"total aerosol mass withingraupel"
+160,CNMHP,"nx,ny,nz",kg/kg,total aerosol mass within hail
+161,DNMCP,"nx,ny,nz",kg/kg,"total dust mass within clouddroplets"
+162,DNMDP,"nx,ny,nz",kg/kg,total dust mass within drizzle
+163,DNMRP,"nx,ny,nz",kg/kg,total dust mass within rain
+164,DNMPP,"nx,ny,nz",kg/kg,"total dust mass within pristineice"
+165,DNMSP,"nx,ny,nz",kg/kg,total dust mass within snow
+166,DNMAP,"nx,ny,nz",kg/kg,"total dust mass withinaggregates"
+167,DNMGP,"nx,ny,nz",kg/kg,total dust mass within graupel
+168,DNMHP,"nx,ny,nz",kg/kg,total dust mass within hail
+169,DINCP,"nx,ny,nz",kg/kg,"dust mass within clouddroplets via ice nucleation"
+170,DINDP,"nx,ny,nz",kg/kg,"dust mass within drizzle viaice nucleation"
+171,DINRP,"nx,ny,nz",kg/kg,"dust mass within rain via icenucleation"
+172,DINPP,"nx,ny,nz",kg/kg,"dust mass within pristine icevia ice nucleation"
+173,DINSP,"nx,ny,nz",kg/kg,"dust mass within snow via icenucleation"
+174,DINAP,"nx,ny,nz",kg/kg,"dust mass within aggregatesvia ice nucleation"
+175,DINGP,"nx,ny,nz",kg/kg,"dust mass within graupel viaice nucleation"
+176,DINHP,"nx,ny,nz",kg/kg,"dust mass within hail via icenucleation"
+177,SNMCP,"nx,ny,nz",kg/kg,"total soluble aerosol masswithin cloud droplets"
+178,SNMDP,"nx,ny,nz",kg/kg,"total soluble aerosol masswithin drizzle"
+179,SNMRP,"nx,ny,nz",kg/kg,"total soluble aerosol masswithin rain"
+180,SNMPP,"nx,ny,nz",kg/kg,"total soluble aerosol masswithin pristine ice"
+181,SNMSP,"nx,ny,nz",kg/kg,"total soluble aerosol masswithin snow"
+182,SNMAP,"nx,ny,nz",kg/kg,"total soluble aerosol masswithin aggregates"
+183,SNMGP,"nx,ny,nz",kg/kg,"total soluble aerosol masswithin graupel"
+184,SNMHP,"nx,ny,nz",kg/kg,"total soluble aerosol masswithin hail"
+185,RESOL_AERO1_MP,"nx,ny,nz",kg/kg,"sub-micron regeneratedaerosol soluble mass mixing
+ratio"
+186,RESOL_AERO2_MP,"nx,ny,nz",kg/kg,"super-micron regeneratedaerosol soluble mass mixing
+ratio"
+187,PCPVR,"nx,ny,nz",kg/m^2/s,rain precipitation rate (3D)
+188,PCPVP,"nx,ny,nz",kg/m^2/s,"pristine ice precipitation rate(3D)"
+189,PCPVS,"nx,ny,nz",kg/m^2/s,snow precipitation rate (3D)
+190,PCPVA,"nx,ny,nz",kg/m^2/s,"aggregates precipitation rate(3D)"
+191,PCPVG,"nx,ny,nz",kg/m^2/s,graupel precipitation rate (3D)
+192,PCPVH,"nx,ny,nz",kg/m^2/s,hail precipitation rate (3D)
+193,PCPVD,"nx,ny,nz",kg/m^2/s,drizzle precipitation rate (3D)
+194,PCPVIP,"nx,ny,nz",kg/m^2/s,"plates precipitation rate (3D;SBM only)"
+195,PCPVIC,"nx,ny,nz",kg/m^2/s,"columns precipitation rate(3D; SBM only)"
+196,PCPVID,"nx,ny,nz",kg/m^2/s,"dendrites precipitation rate(3D; SBM only)"
+197,PCPRR,"nx,ny",kg/m^2/s,surface rain precipitation rate
+198,PCPRP,"nx,ny",kg/m^2/s,"surface pristine iceprecipitation rate"
+199,PCPRS,"nx,ny",kg/m^2/s,surface snow precipitation rate
+200,PCPRA,"nx,ny",kg/m^2/s,"surface aggregatesprecipitation rate"
+201,PCPRG,"nx,ny",kg/m^2/s,"surface graupel precipitationrate"
+202,PCPRH,"nx,ny",kg/m^2/s,surface hail precipitation rate
+203,PCPRD,"nx,ny",kg/m^2/s,"surface drizzle precipitationrate"
+204,PCPRIP,"nx,ny",kg/m^2/s,"surface plates precipitationrate (SBM only)"
+205,PCPRIC,"nx,ny",kg/m^2/s,"surface columns precipitationrate (SBM only)"
+206,PCPRID,"nx,ny",kg/m^2/s,"surface dendrites precipitationrate (SBM only)"
+207,ACCPR,"nx,ny",kg/m^2,"accumulated rain over thecourse of the simulation"
+208,ACCPP,"nx,ny",kg/m^2,"accumulated pristine ice overthe course of the simulation"
+209,ACCPS,"nx,ny",kg/m^2,"accumulated snow over thecourse of the simulation"
+210,ACCPA,"nx,ny",kg/m^2,"accumulated aggregates overthe course of the simulation"
+211,ACCPG,"nx,ny",kg/m^2,"accumulated graupel over thecourse of the simulation"
+212,ACCPH,"nx,ny",kg/m^2,"accumulated hail over thecourse of the simulation"
+213,ACCPD,"nx,ny",kg/m^2,"accumulated drizzle over thecourse of the simulation"
+214,ACCPIP,"nx,ny",kg/m^2,"accumulated plates over thecourse of the simulation (SBM
+only)"
+215,ACCPIC,"nx,ny",kg/m^2,"accumulated columns over thecourse of the simulation (SBM
+only)"
+216,ACCPID,"nx,ny",kg/m^2,"accumulated dendrites overthe course of the simulation
+(SBM only)"
+217,PCPG,"nx,ny",kg/m^2,"microphysics precipitation pertimestep (for water, kg/m^2 =
+mm), Used by LEAF/SIB surface
+models"
+218,QPCPG,"nx,ny",J/m^2,"microphysics precipitationenergy per timestep, Used by
+LEAF surface model"
+219,DPCPG,"nx,ny",m,"microphysics precipitationdepth per timestep, Used by
+LEAF surface model"
+220,ACCPDUST,"nx,ny",kg/m^2,"surface accumulated mass ofaerosols identified as dust"
+221,ACCPAERO,"nx,ny",kg/m^2,"Total surface accumulatedmass of aerosols"
+222,PCPRDUST,"nx,ny",kg/m^2/s,"surface accumulation rate ofaerosols identified as dust"
+223,PCPRAERO,"nx,ny",kg/m^2/s,"Total surface accumulationrate of aerosols"
+224,FTHRD,"nx,ny,nz",K/s,radiative heating rate
+225,BEXT,"nx,ny,nz",km,visibility
+226,SWUP,"nx,ny,nz",W/m^2,upwelling shortwave radiation
+227,SWDN,"nx,ny,nz",W/m^2,"downwelling shortwaveradiation"
+228,LWUP,"nx,ny,nz",W/m^2,upwelling longwave radiation
+229,LWDN,"nx,ny,nz",W/m^2,"downwelling longwaveradiation"
+230,RSHORT,"nx,ny",W/m^2,"surface downwellingshortwave radiation"
+231,RLONG,"nx,ny",W/m^2,"surface downwelling longwaveradiation"
+232,RLONGUP,"nx,ny",W/m^2,"surface upwelling longwaveradiation"
+233,AODT,"nx,ny",unitless,"Aerosol optical depth in visibleradiation band-3"
+234,ALBEDT,"nx,ny",fraction,surface albedo
+235,COSZ,"nx,ny",unitless,cosine of the solar zenith angle
+236,TKEP,"nx,ny,nz",m^2/s^2,"turbulent kinetic energy (fromMellor-Yamada and Deardorf
+schemes only)"
+237,HKH,"nx,ny,nz",m^2/s,"horizontal eddy diffusivitycoefficient for heat for scalar
+quantities (un-density
+weighted)"
+238,VKH,"nx,ny,nz",m^2/s,"vertical eddy diffusivitycoefficient for heat for scalar
+quantities (un-density
+weighted)"
+239,RHKM,"nx,ny,nz",m^2/s,"horizontal eddy diffusivitycoefficient for momentum"
+240,RVKM,"nx,ny,nz",m^2/s,"vertical eddy diffusivitycoefficient for momentum"
+241,RVKH,"nx,ny,nz",m^2/s,"vertical eddy diffusivitycoefficient for heat for scalar
+quantities"
+242,SFLUX_U,"nx,ny",Pascals,surface U-momentum flux
+243,SFLUX_V,"nx,ny",Pascals,surface V-momentum flux
+244,SFLUX_W,"nx,ny",Pascals,surface W-momentum flux
+245,SFLUX_T,"nx,ny",(K*kg),"/(m^2*s)
+surface temperature flux
+(multiply by Cp [~1004
+J/(kg*K)] to get surface
+sensible heat flux in W/m^2)"
+246,SFLUX_R,"nx,ny",kg,"/ (m^2*s) surface moisture flux (multiplyby Lv [~2.5e6 J/kg] to get
+surface latent heat flux in
+W/m^2)"
+247,THSRC,"nx,ny,nz",K/sec,"convective parameterizationheating rate"
+248,RTSRC,"nx,ny,nz",kg/kg/sec,"convective parameterizationmoistening rate"
+249,ACONPR,"nx,ny",kg/m^2,"convective parameterizationtotal accumulated precipitation"
+250,CONPRR,"nx,ny",kg/m^2/sec,"convective parameterizationprecipitation rate"
+251,RCSRC,"nx,ny,nz",kg/kg/sec,"convective cloud water mixingratio tendency (KF scheme
+only)"
+252,RRSRC,"nx,ny,nz",kg/kg/sec,"convective rain mixing ratiotendency (KF scheme only)"
+253,RPSRC,"nx,ny,nz",kg/kg/sec,"convective pristine ice mixingratio tendency (KF scheme
+only)"
+254,RSSRC,"nx,ny,nz",kg/kg/sec,"convective snow mixing ratiotendency (KF scheme only)"
+255,W0AVG,"nx,ny,nz",m/s,"a running mean average ofvertical velocity (KF scheme
+only)"
+256,W0AVGLT,"nx,ny,nz",m/s,"a running mean average of thehorizontal components of the
+contravariant vertical velocity
+(KF scheme only)"
+257,NCA,"nx,ny",m/s,"integer counter keeping trackof number of time steps that
+convective tendencies
+maintained (KF scheme only)"
+258,CONVGO,"nx,ny",m/s,"integer which keeps track ifpre-convection checks satisfied
+(KF scheme only)
+All budgets are accumulated (Total) values unless otherwise noted as being
+instantaneous values. Accumulated budgets are summed each timestep between
+analysis (A) output file writes and then reset. They are not reset for LITE or MEAN
+file outputs. “Total” budgets end with a “T”. Instantaneous budgets have the same
+name but without the “T”."
+259,WP_BUOY_THETA,"nx,ny,nz",m/s,"instantaneous vertical velocitycontribution from Theta-V
+buoyancy computation"
+260,WP_BUOY_COND,"nx,ny,nz",m/s,"instantaneous vertical velocitycontribution from condensate
+loading"
+261,WP_ADVDIF,"nx,ny,nz",m/s,"instantaneous vertical velocitycontribution by the
+combination of both advection
+and diffusion"
+262,LATHEATVAPT,"nx,ny,nz",dΘ,"or dT change in (T or Θ) due to vapordiffusion and cloud & ice
+nucleation"
+263,LATHEATFRZT,"nx,ny,nz",dΘ,"or dT change in (T or Θ) due tocollision-coalescence and
+melting routines"
+264,LATHEATVAP,"nx,ny,nz",dΘ,"or dT Instantaneous / singletimestep (T or Θ) due to vapor
+diffusion and cloud & ice
+nucleation"
+265,LATHEATFRZ,"nx,ny,nz",dΘ,"or dT Instantaneous / singletimestep (T or Θ) due to
+collision-coalescence and
+melting routines"
+266,NUCCLDRT,"nx,ny,nz",kg/kg,"nucleation of cloud and drizzlewater mixing ratio"
+267,NUCICERT,"nx,ny,nz",kg/kg,"nucleation of pristine icemixing ratio from all
+nucleation mechanisms"
+268,VAPLIQT,"nx,ny,nz",kg/kg,"vapor condensation summedfor all liquid hydrometeor
+species"
+269,VAPICET,"nx,ny,nz",kg/kg,"vapor deposition summed forall ice hydrometeor species"
+270,EVAPLIQT,"nx,ny,nz",kg/kg,"evaporation summed for allliquid hydrometeor species"
+271,EVAPICET,"nx,ny,nz",kg/kg,"sublimation summed for all icehydrometeor species"
+272,MELTICET,"nx,ny,nz",kg/kg,"melting of all ice species inmelting routine (these are the
+category mass transfers due to
+melting)"
+273,MELTINGT,"nx,ny,nz",kg/kg,"Total melting computedalongside latent heating
+routines in association with all
+phase changes from ice to
+liquid. Can include fractional
+changes (partial melting)"
+274,FREEZINGT,"nx,ny,nz",kg/kg,"Total freezing computedalongside latent heating
+routines in association with all
+phase changes from liquid to
+ice to. Can include fractional
+changes (partial melting)"
+275,CLD2RAINT,"nx,ny,nz",kg/kg,"cloud water transferred to rainvia collection"
+276,RIMECLDT,"nx,ny,nz",kg/kg,"cloud water collected by all icespecies (rcx values; see
+mic_coll.f90) (mass transfer
+from cloud)"
+277,RAIN2ICET,"nx,ny,nz",kg/kg,"rain water collected by icespecies (rcx values; see
+mic_coll.f90) (mass transfer
+from rain)"
+278,ICE2RAINT,"nx,ny,nz",kg/kg,"ice melting due to collection ofrain (rcy values; see
+mic_coll.f90) (mass transfer ice
+to rain)"
+279,AGGREGATET,"nx,ny,nz",kg/kg,"ice amount transferred toaggregates via collection
+All budgets are accumulated (Total) values unless otherwise noted as being
+instantaneous values. Accumulated budgets are summed each timestep between
+analysis (A) output file writes and then reset. They are not reset for LITE or MEAN
+file outputs. “Total” budgets end with a “T”. “Instantaneous” budgets for this set do
+not currently exist."
+280,INUCHOMRT,"nx,ny,nz",kg/kg,"homogeneous droplet freezingice nucleation"
+281,INUCCONTRT,"nx,ny,nz",kg/kg,contact freezing ice nucleation
+282,INUCIFNRT,"nx,ny,nz",kg/kg,"condensation/immersionfreezing ice nucleation from ice
+nuclei"
+283,INUCHAZRT,"nx,ny,nz",kg/kg,"haze droplet nucleation tied toaerosol concentration"
+284,VAPCLDT,"nx,ny,nz",kg/kg,"vapor condensation on clouddroplets"
+285,VAPRAINT,"nx,ny,nz",kg/kg,vapor condensation on rain
+286,VAPPRIST,"nx,ny,nz",kg/kg,vapor deposition on pristine ice
+287,VAPSNOWT,"nx,ny,nz",kg/kg,vapor deposition on snow
+288,VAPAGGRT,"nx,ny,nz",kg/kg,vapor deposition on aggregates
+289,VAPGRAUT,"nx,ny,nz",kg/kg,vapor deposition on graupel
+290,VAPHAILT,"nx,ny,nz",kg/kg,vapor deposition on hail
+291,VAPDRIZT,"nx,ny,nz",kg/kg,vapor condensation on drizzle
+292,EVAPCLDT,"nx,ny,nz",kg/kg,evaporation of cloud droplets
+293,EVAPRAINT,"nx,ny,nz",kg/kg,evaporation of rain
+294,EVAPPRIST,"nx,ny,nz",kg/kg,sublimation of pristine ice
+295,EVAPSNOWT,"nx,ny,nz",kg/kg,sublimation of snow
+296,EVAPAGGRT,"nx,ny,nz",kg/kg,sublimation of aggregates
+297,EVAPGRAUT,"nx,ny,nz",kg/kg,sublimation of graupel
+298,EVAPHAILT,"nx,ny,nz",kg/kg,sublimation of hail
+299,EVAPDRIST,"nx,ny,nz",kg/kg,evaporation of drizzle
+300,MELTPRIST,"nx,ny,nz",kg/kg,"mass transfer from pristine icedue to melting"
+301,MELTSNOWT,"nx,ny,nz",kg/kg,"mass transfer from snow due tomelting"
+302,MELTAGGRT,"nx,ny,nz",kg/kg,"mass transfer from aggregatesdue to melting"
+303,MELTGRAUT,"nx,ny,nz",kg/kg,"mass transfer from graupel dueto melting"
+304,MELTHAILT,"nx,ny,nz",kg/kg,"mass transfer from hail due tomelting"
+305,RIMECLDSNOWT,"nx,ny,nz",kg/kg,"mass transfer from cloud due toriming by snow"
+306,RIMECLDAGGRT,"nx,ny,nz",kg/kg,"mass transfer from cloud due toriming by aggregates"
+307,RIMECLDGRAUT,"nx,ny,nz",kg/kg,"mass transfer from cloud due toriming by graupel"
+308,RIMECLDHAILT,"nx,ny,nz",kg/kg,"mass transfer from cloud due toriming by hail"
+309,RAIN2PRT,"nx,ny,nz",kg/kg,"mass transfer from rain due tocollisions with pristine ice"
+310,RAIN2SNT,"nx,ny,nz",kg/kg,"mass transfer from rain due tocollisions with snow"
+311,RAIN2AGT,"nx,ny,nz",kg/kg,"mass transfer from rain due tocollisions with aggregates"
+312,RAIN2GRT,"nx,ny,nz",kg/kg,"mass transfer from rain due tocollisions with graupel"
+313,RAIN2HAT,"nx,ny,nz",kg/kg,"mass transfer from rain due tocollisions with hail"
+314,AGGRSELFPRIST,"nx,ny,nz",kg/kg,"mass transfer to aggregates dueto pristine ice self-collection"
+315,AGGRSELFSNOWT,"nx,ny,nz",kg/kg,"mass transfer to aggregates dueto snow self-collection"
+316,AGGRPRISSNOWT,"nx,ny,nz",kg/kg,"mass transfer to aggregates dueto pristine ice / snow collisions
+All budgets are accumulated (Total) values unless otherwise noted as being
+instantaneous values. Accumulated budgets are summed each timestep between
+analysis (A) output file writes and then reset. They are not reset for LITE or MEAN
+file outputs. “Total” budgets end with a “T”. “Instantaneous” budgets for this set do
+not currently exist."
+317,DUST1CLDRT,"nx,ny,nz",kg/kg,"nucleation of cloud dropletmixing ratio from dust mode 1"
+318,DUST2CLDRT,"nx,ny,nz",kg/kg,"nucleation of cloud dropletmixing ratio from dust mode 2"
+319,DUST1DRZRT,"nx,ny,nz",kg/kg,"nucleation of drizzle dropletmixing ratio from dust mode 1"
+320,DUST2DRZRT,"nx,ny,nz",kg/kg,"nucleation of drizzle dropletmixing ratio from dust mode 2"
