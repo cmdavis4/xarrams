@@ -46,7 +46,7 @@ def ramsin_str(s: object) -> str:
 
 def build_rams_directory_structure(base_dir: PathLike):
     base_dir = Path(base_dir)
-    base_dir.mkdir(exist_ok=True, parents=False)
+    base_dir.mkdir(exist_ok=True, parents=True)
 
     (base_dir / "input").mkdir(exist_ok=True, parents=False)
     (base_dir / "output").mkdir(exist_ok=True, parents=False)
@@ -58,11 +58,11 @@ def build_rams_directory_structure(base_dir: PathLike):
 
 def generate_ramsin(
     ramsin_name: str,
-    parameters: dict[str, str],
-    ramsin_dir: PathLike,
+    rams_run_dir: PathLike,
     ramsin_template_path: PathLike,
-    rams_input_dir: Optional[PathLike],
-    rams_output_dir: Optional[PathLike],
+    parameters: dict[str, str],
+    rams_input_dir: Optional[PathLike] = None,
+    rams_output_dir: Optional[PathLike] = None,
 ) -> str:
     """Generate a RAMSIN configuration file from a template.
 
@@ -90,9 +90,15 @@ def generate_ramsin(
     """
     parameters = dict(parameters)
 
-    rams_input_dir = Path(rams_input_dir) if rams_input_dir is not None else None
-    rams_output_dir = Path(rams_output_dir) if rams_output_dir is not None else None
-    ramsin_dir = Path(ramsin_dir)
+    rams_run_dir = Path(rams_run_dir)
+    rams_input_dir = (
+        Path(rams_input_dir) if rams_input_dir is not None else rams_run_dir / "input"
+    )
+    rams_output_dir = (
+        Path(rams_output_dir)
+        if rams_output_dir is not None
+        else rams_run_dir / "output"
+    )
     ramsin_template_path = Path(ramsin_template_path)
 
     ramsin = ramsin_template_path.read_text()
@@ -113,7 +119,9 @@ def generate_ramsin(
             parameters[param_name] = f"'{rams_output_dir / suffix}'"
 
     for parameter_name, parameter_value in parameters.items():
-        parameter_regex = r"(^\s*{}\s*\=\s*).*?(\n[^\n\!]*[\=\$])".format(parameter_name)
+        parameter_regex = r"(^\s*{}\s*\=\s*).*?(\n[^\n\!]*[\=\$])".format(
+            parameter_name
+        )
         replacement_regex = r"\g<1>{},\g<2>".format(parameter_value)
         ramsin, n_subs = re.subn(
             parameter_regex,
@@ -125,8 +133,9 @@ def generate_ramsin(
         if n_subs == 0:
             raise ValueError(f"Field {parameter_name} not found in template RAMSIN")
 
-    (ramsin_dir / f"RAMSIN.{ramsin_name}").write_text(ramsin)
-    return ramsin
+    ramsin_path = rams_run_dir / f"RAMSIN.{ramsin_name}"
+    ramsin_path.write_text(ramsin)
+    return ramsin_path
 
 
 def run_rams(

@@ -14,16 +14,14 @@ import pint_xarray
 # Datetime format
 # ---------------------------------------------------------------------------
 
-RAMS_DT_FORMAT: str = r"%Y-%m-%d-%H%M%S"
+RAMS_FILENAME_DT_STRFTIME_FORMAT: str = r"%Y-%m-%d-%H%M%S"
 """strftime/strptime format string for RAMS filenames (e.g. ``2020-01-01-120000``)."""
-
-RAMS_DT_STRFTIME_STR: str = RAMS_DT_FORMAT  # backwards-compat alias
 
 # ---------------------------------------------------------------------------
 # Filename parsing
 # ---------------------------------------------------------------------------
 
-RAMS_FILENAME_DATETIME_REGEX: str = r"[0-9]{4}\-[0-9]{2}\-[0-9]{2}\-[0-9]{6}"
+RAMS_FILENAME_DT_REGEX: str = r"[0-9]{4}\-[0-9]{2}\-[0-9]{2}\-[0-9]{6}"
 """Regex that matches the datetime portion of a RAMS output filename."""
 
 # ---------------------------------------------------------------------------

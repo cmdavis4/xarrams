@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # IO: filename parsing
 # ---------------------------------------------------------------------------
@@ -15,23 +14,23 @@ import pytest
 
 class TestGetDatetime:
     def test_basic(self):
-        from xarrams import get_datetime
+        from xarrams import get_datetime_from_rams_filename
 
-        dt = get_datetime("a-A-2020-01-01-120000-g1.h5")
+        dt = get_datetime_from_rams_filename("a-A-2020-01-01-120000-g1.h5")
         assert isinstance(dt, datetime)
         assert dt == datetime(2020, 1, 1, 12, 0, 0)
 
     def test_lite_file(self):
-        from xarrams import get_datetime
+        from xarrams import get_datetime_from_rams_filename
 
-        dt = get_datetime("a-L-2023-06-15-183000-g2.h5")
+        dt = get_datetime_from_rams_filename("a-L-2023-06-15-183000-g2.h5")
         assert dt == datetime(2023, 6, 15, 18, 30, 0)
 
     def test_invalid_raises(self):
-        from xarrams import get_datetime
+        from xarrams import get_datetime_from_rams_filename
 
         with pytest.raises(ValueError, match="Unable to parse datetime"):
-            get_datetime("invalid_filename.h5")
+            get_datetime_from_rams_filename("invalid_filename.h5")
 
 
 class TestGetGridNumber:
@@ -57,13 +56,19 @@ class TestToRamsOutputFilename:
         from xarrams import to_rams_output_filename
 
         dt = datetime(2020, 1, 1, 12, 0, 0)
-        assert to_rams_output_filename(dt, lite=False, grid=1) == "a-A-2020-01-01-120000-g1.h5"
+        assert (
+            to_rams_output_filename(dt, lite=False, grid=1)
+            == "a-A-2020-01-01-120000-g1.h5"
+        )
 
     def test_lite(self):
         from xarrams import to_rams_output_filename
 
         dt = datetime(2020, 1, 1, 12, 0, 0)
-        assert to_rams_output_filename(dt, lite=True, grid=2) == "a-L-2020-01-01-120000-g2.h5"
+        assert (
+            to_rams_output_filename(dt, lite=True, grid=2)
+            == "a-L-2020-01-01-120000-g2.h5"
+        )
 
 
 class TestToHeaderFilepath:
@@ -87,12 +92,12 @@ class TestToHeaderFilepath:
 
 class TestConstants:
     def test_rams_dt_format(self):
-        from xarrams import RAMS_DT_FORMAT
+        from xarrams import RAMS_FILENAME_DT_STRFTIME_FORMAT
 
-        assert RAMS_DT_FORMAT == "%Y-%m-%d-%H%M%S"
+        assert RAMS_FILENAME_DT_STRFTIME_FORMAT == "%Y-%m-%d-%H%M%S"
         # Verify it works as a format string
         dt = datetime(2020, 1, 1, 12, 0, 0)
-        assert dt.strftime(RAMS_DT_FORMAT) == "2020-01-01-120000"
+        assert dt.strftime(RAMS_FILENAME_DT_STRFTIME_FORMAT) == "2020-01-01-120000"
 
     def test_hydrometeor_species(self):
         from xarrams import HYDROMETEOR_SPECIES_FULL_NAMES
@@ -125,7 +130,9 @@ class TestGetZLevels:
         assert isinstance(levels, np.ndarray)
         assert len(levels) == 51  # nnzp + 1 (includes sub-ground level)
         assert levels[0] < 0  # sub-ground level
-        assert all(levels[i] < levels[i + 1] for i in range(len(levels) - 1))  # monotonically increasing
+        assert all(
+            levels[i] < levels[i + 1] for i in range(len(levels) - 1)
+        )  # monotonically increasing
 
     def test_with_max_height(self):
         from xarrams import get_z_levels
@@ -280,7 +287,9 @@ class TestWithUpdatedSoundingFields:
             "US": [5.0, 10.0],
             "VS": [0.0, 2.0],
         })
-        result = with_updated_sounding_fields({}, sounding, update_sounding_field_flags=False)
+        result = with_updated_sounding_fields(
+            {}, sounding, update_sounding_field_flags=False
+        )
         assert "IPSFLG" not in result
 
 
@@ -294,18 +303,13 @@ class TestGenerateRamsin:
         from xarrams import generate_ramsin
 
         template = tmp_path / "RAMSIN.template"
-        template.write_text(
-            "$MODEL_GRIDS\n"
-            " TIMMAX = 3600.,\n"
-            " NNXP = 100,\n"
-            "$END\n"
-        )
+        template.write_text("$MODEL_GRIDS\n TIMMAX = 3600.,\n NNXP = 100,\n$END\n")
         result = generate_ramsin(
             ramsin_name="test",
             parameters={"TIMMAX": "7200."},
             rams_input_dir=None,
             rams_output_dir=None,
-            ramsin_dir=tmp_path,
+            rams_run_dir=tmp_path,
             ramsin_template_path=template,
         )
         assert "7200." in result
@@ -322,7 +326,7 @@ class TestGenerateRamsin:
                 parameters={"NONEXISTENT_FIELD": "42"},
                 rams_input_dir=None,
                 rams_output_dir=None,
-                ramsin_dir=tmp_path,
+                rams_run_dir=tmp_path,
                 ramsin_template_path=template,
             )
 

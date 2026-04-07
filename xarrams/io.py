@@ -10,27 +10,29 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any, Callable, Optional, Union
+import datetime as dt
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 from tqdm.notebook import tqdm
 
-from carlee_tools.types_carlee_tools import PathLike
+from carlee_tools.types_carlee_tools import PathLike, DatetimeLike
 from carlee_tools.utils import dt_to_str, str_to_dt
 
 from .constants import (
     HEADER_NAME_DIMENSION_DICT,
     RAMS_ANALYSIS_FILE_DIMENSIONS_DICT,
-    RAMS_DT_FORMAT,
-    RAMS_FILENAME_DATETIME_REGEX,
+    RAMS_FILENAME_DT_STRFTIME_FORMAT,
+    RAMS_FILENAME_DT_REGEX,
     RAMS_VARIABLES_DF,
     ureg,
 )
 
 
-def get_datetime(
+def get_datetime_from_rams_filename(
     rams_output_filepath: PathLike,
-    filename_datetime_regex: str = RAMS_FILENAME_DATETIME_REGEX,
+    filename_datetime_regex: str = RAMS_FILENAME_DT_REGEX,
 ) -> "datetime.datetime":
     """Extract the datetime from a RAMS output filename.
 
@@ -49,8 +51,21 @@ def get_datetime(
     name = Path(rams_output_filepath).name
     match = re.search(filename_datetime_regex, name)
     if not match:
-        raise ValueError(f"Unable to parse datetime from filepath {rams_output_filepath}")
+        raise ValueError(
+            f"Unable to parse datetime from filepath {rams_output_filepath}"
+        )
     return str_to_dt(match.group(0))
+
+
+def to_ramsin_parameters(dt_like: DatetimeLike):
+    # Coerce to a pd.Timestamp (accepts datetime, np.datetime64, and pd.Timestamp)
+    ts = pd.Timestamp(dt_like)
+    return {
+        "IYEAR1": str(ts.year).zfill(4),
+        "IMONTH1": str(ts.month).zfill(2),
+        "IDATE1": str(ts.day).zfill(2),
+        "ITIME1": str(ts.hour).zfill(2) + str(ts.minute).zfill(2),
+    }
 
 
 def get_grid_number(rams_output_filepath: PathLike) -> int:
@@ -67,14 +82,14 @@ def get_grid_number(rams_output_filepath: PathLike) -> int:
     """
     match = re.search(r"g([1-9]+)\.h5", Path(rams_output_filepath).name)
     if not match:
-        raise ValueError(f"Unable to parse grid number from filepath {rams_output_filepath}")
+        raise ValueError(
+            f"Unable to parse grid number from filepath {rams_output_filepath}"
+        )
     return int(match.group(1))
 
 
 def to_rams_output_filename(
-    this_dt: "datetime.datetime",
-    lite: bool = False,
-    grid: int = 1,
+    this_dt: DatetimeLike, lite: bool = False, grid: int = 1, header=False
 ) -> str:
     """Build a RAMS output filename for a given datetime, file type, and grid.
 
@@ -86,7 +101,10 @@ def to_rams_output_filename(
     Returns:
         Filename string (e.g. ``a-A-2020-01-01-120000-g1.h5``).
     """
-    return f"a-{'L' if lite else 'A'}-{dt_to_str(this_dt, date_format=RAMS_DT_FORMAT)}-g{grid}.h5"
+    tail = "head.txt" if header else f"g{grid}.h5"
+    return (
+        f"a-{'L' if lite else 'A'}-{dt_to_str(this_dt, date_format=RAMS_FILENAME_DT_STRFTIME_FORMAT)}-{tail}"
+    )
 
 
 def to_header_filepath(rams_output_filepath: PathLike) -> Path:
@@ -160,7 +178,9 @@ def infer_rams_dimensions(
     dimension_vals = get_rams_dimension_values(header_filepath, grid_number=grid_number)
 
     header_dimension_lengths = {k: len(v) for k, v in dimension_vals.items()}
-    if len(header_dimension_lengths.values()) != len(set(header_dimension_lengths.values())):
+    if len(header_dimension_lengths.values()) != len(
+        set(header_dimension_lengths.values())
+    ):
         raise ValueError(
             "Cannot determine dimension mapping when dimensions have identical lengths."
         )
@@ -177,11 +197,13 @@ def infer_rams_dimensions(
         ]
         if len(ds_dims_matching_length) > 1:
             raise ValueError(
-                "Multiple dimensions of same length in dataset; cannot infer dimension names and values"
+                "Multiple dimensions of same length in dataset; cannot infer dimension"
+                " names and values"
             )
         if len(ds_dims_matching_length) < 1:
             raise ValueError(
-                f"No dimensions of length {header_dim_length} found in dataset; this shouldn't happen"
+                f"No dimensions of length {header_dim_length} found in dataset; this"
+                " shouldn't happen"
             )
         dim_names_mapping[ds_dims_matching_length[0]] = header_dim_name
 
@@ -211,10 +233,10 @@ def fill_rams_output_dimensions(
         ds = ds.rename_dims(dimension_names_mapping).assign_coords(dimension_values)
     except ValueError:
         print(
-            "Mismatch between dimension lengths in dataset and header;\n"
-            f"Passed dimension dict: {dimension_names_mapping}\n"
-            f"Dimension sizes in dataset: {ds.dims}\n"
-            f"Dimension lengths from header: { {k: len(v) for k, v in dimension_values.items()} }"
+            "Mismatch between dimension lengths in dataset and header;\nPassed"
+            f" dimension dict: {dimension_names_mapping}\nDimension sizes in dataset:"
+            f" {ds.dims}\nDimension lengths from header:"
+            f" { {k: len(v) for k, v in dimension_values.items()} }"
         )
         raise
     return ds
@@ -234,7 +256,7 @@ def read_rams_output(
     concatenate: bool = True,
     silent: bool = False,
     open_dataset_kwargs: Optional[dict[str, Any]] = None,
-    filename_datetime_regex: str = RAMS_FILENAME_DATETIME_REGEX,
+    filename_datetime_regex: str = RAMS_FILENAME_DT_REGEX,
     units: bool = False,
 ) -> Union[xr.Dataset, list[xr.Dataset]]:
     """Read one or more RAMS HDF5 output files into an xarray Dataset.
@@ -271,6 +293,8 @@ def read_rams_output(
     keep_vars = keep_vars or []
     open_dataset_kwargs = open_dataset_kwargs or {}
 
+    # Convert to list in case it's a generator
+    input_filenames = list(input_filenames)
     lite = any(Path(x).name.startswith("a-L") for x in input_filenames)
     if not lite and not dim_names:
         dim_names = RAMS_ANALYSIS_FILE_DIMENSIONS_DICT
@@ -278,7 +302,6 @@ def read_rams_output(
     if drop_vars and keep_vars:
         raise ValueError("Cannot pass both drop_vars and keep_vars")
 
-    lite = Path(list(input_filenames)[0]).name.startswith("a-L")
     if not dim_names and not lite:
         dim_names = RAMS_ANALYSIS_FILE_DIMENSIONS_DICT
 
@@ -290,13 +313,18 @@ def read_rams_output(
         try:
             import dask  # noqa: F401
         except ImportError:
-            print("dask must be installed to use the `parallel` option; falling back to serial")
+            print(
+                "dask must be installed to use the `parallel` option; falling back to"
+                " serial"
+            )
             parallel = False
 
     input_filenames = [Path(x) for x in input_filenames]
     input_datetimes = []
     for fpath in input_filenames:
-        time = get_datetime(fpath, filename_datetime_regex=filename_datetime_regex)
+        time = get_datetime_from_rams_filename(
+            fpath, filename_datetime_regex=filename_datetime_regex
+        )
         if not time:
             raise ValueError(
                 f"File {fpath.name} does not contain a valid timestamp in the filename"
@@ -341,7 +369,8 @@ def read_rams_output(
 
     if parallel:
         maybe_print(
-            f"Reading and concatenating {len(input_filenames)} individual timestep outputs..."
+            f"Reading and concatenating {len(input_filenames)} individual timestep"
+            " outputs..."
         )
         from contextlib import nullcontext
 

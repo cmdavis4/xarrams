@@ -18,7 +18,7 @@ def test_function_imports():
         fill_rams_output_dimensions,
         format_sounding_field_ramsin_str,
         generate_ramsin,
-        get_datetime,
+        get_datetime_from_rams_filename,
         get_grid_number,
         get_z_levels,
         infer_rams_dimensions,
@@ -35,6 +35,7 @@ def test_function_imports():
         wk84_sounding,
         write_rams_formatted_sounding,
     )
+
     for fn in [
         calculate_bsr_variables,
         calculate_derived_variables,
@@ -42,7 +43,7 @@ def test_function_imports():
         fill_rams_output_dimensions,
         format_sounding_field_ramsin_str,
         generate_ramsin,
-        get_datetime,
+        get_datetime_from_rams_filename,
         get_grid_number,
         get_z_levels,
         infer_rams_dimensions,
@@ -70,17 +71,17 @@ def test_constant_imports():
         DEFAULT_BSR_VARIABLES,
         HYDROMETEOR_SPECIES_FULL_NAMES,
         RAMS_ANALYSIS_FILE_DIMENSIONS_DICT,
-        RAMS_DT_FORMAT,
+        RAMS_FILENAME_DT_STRFTIME_FORMAT,
         RAMS_DT_STRFTIME_STR,
-        RAMS_FILENAME_DATETIME_REGEX,
+        RAMS_FILENAME_DT_REGEX,
         RAMS_VARIABLES_DF,
         SOUNDING_NAMELIST_VARIABLES,
         ureg,
     )
 
-    assert isinstance(RAMS_DT_FORMAT, str)
-    assert RAMS_DT_STRFTIME_STR == RAMS_DT_FORMAT
-    assert isinstance(RAMS_FILENAME_DATETIME_REGEX, str)
+    assert isinstance(RAMS_FILENAME_DT_STRFTIME_FORMAT, str)
+    assert RAMS_DT_STRFTIME_STR == RAMS_FILENAME_DT_STRFTIME_FORMAT
+    assert isinstance(RAMS_FILENAME_DT_REGEX, str)
     assert isinstance(RAMS_ANALYSIS_FILE_DIMENSIONS_DICT, dict)
     assert isinstance(DEFAULT_BSR_VARIABLES, list)
     assert isinstance(HYDROMETEOR_SPECIES_FULL_NAMES, dict)
