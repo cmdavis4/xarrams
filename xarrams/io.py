@@ -153,61 +153,114 @@ def get_rams_dimension_values(
     return dimension_vals
 
 
+_RAMS_DIM_TO_STANDARD: dict[str, str] = {"nx": "x", "ny": "y", "nz": "z"}
+"""RAMS Fortran dimension labels (from rams_variables.csv) → header standard names."""
+
+
 def infer_rams_dimensions(
     single_time_rams_ds: xr.Dataset,
     grid_number: int = 1,
 ) -> tuple[dict[str, str], dict[str, list[float]]]:
-    """Infer the mapping from phony dimensions to real names using the header file.
+    """Infer the mapping from phony dimensions to real names using known variable shapes.
 
-    Works by matching dimension lengths between the dataset and the header file.
-    Requires that no two grid dimensions share the same length.
+    For each data variable in the dataset, looks up its expected RAMS dimension
+    spec in :data:`RAMS_VARIABLES_DF` (Fortran order, e.g. ``"nx,ny,nz"``),
+    reverses it to the on-disk/numpy axis order, and pairs each phony dim
+    positionally with the corresponding standard name. Votes are aggregated
+    across every recognized variable; the most common vote wins so a single
+    bad CSV entry can't poison the mapping.
+
+    This is robust when ``nx == ny`` (length-based matching is ambiguous there)
+    and is independent of the order in which variables appear in the file —
+    important for lite files, where ``LITE_VARS`` can change which variable
+    h5netcdf encounters first and therefore which ``phony_dim_N`` ends up
+    referring to which physical axis.
 
     Args:
         single_time_rams_ds: A single-timestep RAMS dataset (must have ``encoding["source"]``).
-        grid_number: Grid number.
+        grid_number: Grid number used to look up coordinate values in the header file.
 
     Returns:
-        A tuple of ``(dim_names_mapping, dimension_values)`` where *dim_names_mapping*
-        maps dataset dimension names to standard names and *dimension_values* maps
-        standard names to coordinate arrays.
+        ``(dim_names_mapping, dimension_values)`` where *dim_names_mapping* maps
+        dataset (phony) dimension names to standard names (``x``, ``y``, ``z``)
+        and *dimension_values* maps standard names to coordinate arrays read
+        from the header.
 
     Raises:
-        ValueError: If dimensions cannot be uniquely matched by length.
+        ValueError: If no recognized variables are present or if ``x``/``y``/``z``
+            cannot all be located.
     """
+    from collections import Counter
+
     header_filepath = to_header_filepath(single_time_rams_ds.encoding["source"])
     dimension_vals = get_rams_dimension_values(header_filepath, grid_number=grid_number)
 
-    header_dimension_lengths = {k: len(v) for k, v in dimension_vals.items()}
-    if len(header_dimension_lengths.values()) != len(
-        set(header_dimension_lengths.values())
-    ):
+    known_dims: dict[str, str] = (
+        RAMS_VARIABLES_DF.dropna(subset=["dimensions"])
+        .set_index("name")["dimensions"]
+        .to_dict()
+    )
+
+    # Tally per-phony-dim votes for each standard name across all recognized vars.
+    votes: dict[str, Counter] = {}
+    n_recognized = 0
+    for var_name in single_time_rams_ds.data_vars:
+        spec = known_dims.get(str(var_name))
+        if not spec:
+            continue
+        rams_dims = [d.strip() for d in spec.split(",")]
+        if not all(d in _RAMS_DIM_TO_STANDARD for d in rams_dims):
+            # Variable references a dim we don't have header values for
+            # (e.g. ``np``, ``nzg``, ``nkr``); skip — those phony dims are
+            # handled by ``keep_unknown_dims`` downstream.
+            on_disk_order = list(reversed(rams_dims))
+        else:
+            on_disk_order = list(reversed(rams_dims))
+        ds_dims = single_time_rams_ds[var_name].dims
+        if len(ds_dims) != len(on_disk_order):
+            continue
+        n_recognized += 1
+        for ds_dim, rams_dim in zip(ds_dims, on_disk_order, strict=True):
+            standard = _RAMS_DIM_TO_STANDARD.get(rams_dim)
+            if standard is None:
+                continue
+            votes.setdefault(ds_dim, Counter())[standard] += 1
+
+    if n_recognized == 0:
         raise ValueError(
-            "Cannot determine dimension mapping when dimensions have identical lengths."
+            "Cannot infer dimension names: no variables in this dataset are"
+            " present in RAMS_VARIABLES_DF."
         )
 
-    ds_dimension_lengths = {
-        dim: len(single_time_rams_ds[dim]) for dim in single_time_rams_ds.dims
-    }
+    # Resolve votes: take the majority winner for each phony dim. Conflicts are
+    # tolerated (e.g. RCO2P is mis-listed in the CSV as ``nz,nx,ny``) but warn.
     dim_names_mapping: dict[str, str] = {}
-    for header_dim_name, header_dim_length in header_dimension_lengths.items():
-        ds_dims_matching_length = [
-            ds_dim
-            for ds_dim, ds_dim_length in ds_dimension_lengths.items()
-            if ds_dim_length == header_dim_length
-        ]
-        if len(ds_dims_matching_length) > 1:
-            raise ValueError(
-                "Multiple dimensions of same length in dataset; cannot infer dimension"
-                " names and values"
+    for ds_dim, counter in votes.items():
+        winner, winner_count = counter.most_common(1)[0]
+        total = sum(counter.values())
+        if winner_count != total:
+            print(
+                f"Warning: conflicting dim inference for {ds_dim}: {dict(counter)}."
+                f" Using majority winner {winner!r}."
             )
-        if len(ds_dims_matching_length) < 1:
-            raise ValueError(
-                f"No dimensions of length {header_dim_length} found in dataset; this"
-                " shouldn't happen"
-            )
-        dim_names_mapping[ds_dims_matching_length[0]] = header_dim_name
+        dim_names_mapping[ds_dim] = winner
 
-    assert len(dim_names_mapping) == len(HEADER_NAME_DIMENSION_DICT)
+    # Sanity check: every standard name should be assigned to exactly one phony dim.
+    assigned = list(dim_names_mapping.values())
+    expected = set(_RAMS_DIM_TO_STANDARD.values())
+    missing = expected - set(assigned)
+    if missing:
+        raise ValueError(
+            f"Could not infer phony dim mapping for {sorted(missing)}; no"
+            " recognized variables in the dataset reference these dimensions."
+        )
+    duplicates = [name for name in expected if assigned.count(name) > 1]
+    if duplicates:
+        raise ValueError(
+            f"Inferred dimension mapping is inconsistent: {sorted(duplicates)}"
+            f" assigned to multiple phony dims. Mapping: {dim_names_mapping}"
+        )
+
     return dim_names_mapping, dimension_vals
 
 
