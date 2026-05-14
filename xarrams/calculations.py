@@ -57,8 +57,18 @@ def calculate_thermodynamic_variables(
             input variables are absent.
     """
     needed_vars = [
-        "PI", "THETA", "RTP", "RV", "DN0",
-        "RCP", "RRP", "RPP", "RSP", "RAP", "RGP", "RHP",
+        "PI",
+        "THETA",
+        "RTP",
+        "RV",
+        "DN0",
+        "RCP",
+        "RRP",
+        "RPP",
+        "RSP",
+        "RAP",
+        "RGP",
+        "RHP",
     ]
 
     def vars_are_present(names: list[str]) -> bool:
@@ -178,15 +188,16 @@ def calculate_derived_variables(storm_ds: xr.Dataset) -> xr.Dataset:
     storm_ds["y"] = storm_ds["y"] - min(storm_ds["y"])
 
     storm_ds = storm_ds.assign_coords(
-        t_minutes=(storm_ds["time"] - storm_ds["time"].values[0]).dt.total_seconds() // 60
+        t_minutes=(storm_ds["time"] - storm_ds["time"].values[0]).dt.total_seconds()
+        / 60
     )
 
-    storm_ds["vertical_vorticity"] = (
-        storm_ds["VC"].differentiate("x") - storm_ds["UC"].differentiate("y")
-    )
-    storm_ds["divergence"] = (
-        storm_ds["UC"].differentiate("x") + storm_ds["VC"].differentiate("y")
-    )
+    storm_ds["vertical_vorticity"] = storm_ds["VC"].differentiate("x") - storm_ds[
+        "UC"
+    ].differentiate("y")
+    storm_ds["divergence"] = storm_ds["UC"].differentiate("x") + storm_ds[
+        "VC"
+    ].differentiate("y")
 
     for var in ["x", "y"]:
         storm_ds[f"{var}_middle"] = storm_ds[var].max().values / 2
@@ -219,7 +230,9 @@ def calculate_bsr_variables(
         ValueError: If *base_state* contains a time dimension.
     """
     if "time" in base_state.dims:
-        raise ValueError("base_state dataset must not have a time dimension, to avoid confusion")
+        raise ValueError(
+            "base_state dataset must not have a time dimension, to avoid confusion"
+        )
 
     ds = ds.copy()
     base_state = base_state.mean(["x", "y"])

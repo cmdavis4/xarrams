@@ -412,7 +412,11 @@ def read_rams_output(
         else:
             ds = to_concat[0]
 
-    ds = ds.assign_coords(**{time_dim_name: input_datetimes})
+    source_files = [str(f) for f in input_filenames]
+    ds = ds.assign_coords(**{
+        time_dim_name: input_datetimes,
+        "source_file": (time_dim_name, source_files),
+    })
     ds = ds.sortby(time_dim_name)
 
     if parallel:
