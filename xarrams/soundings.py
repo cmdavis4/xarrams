@@ -200,6 +200,33 @@ def plot_sounding(
     return fig
 
 
+def calculate_sounding_derived_vars(df):
+    df["dewpoint"] = mpc.dewpoint_from_relative_humidity(
+        temperature=df["TS"].values * units("degC"),
+        relative_humidity=df["RTS"].values * units("percent"),
+    ).to("degC")
+    df["q_v"] = mpc.mixing_ratio_from_relative_humidity(
+        pressure=df["PS"].values * units("hPa"),
+        temperature=df["TS"].values * units("degC"),
+        relative_humidity=df["RTS"].values * units("percent"),
+    ).to("g/kg")
+    df["theta"] = mpc.potential_temperature(
+        pressure=df["PS"].values * units("hPa"),
+        temperature=df["TS"].values * units("degC"),
+    ).to("K")
+    df["theta_v"] = mpc.virtual_potential_temperature(
+        pressure=df["PS"].values * units("hPa"),
+        temperature=df["TS"].values * units("degC"),
+        mixing_ratio=df["q_v"].values * units("g/kg"),
+    ).to("K")
+    df["theta_e"] = mpc.equivalent_potential_temperature(
+        pressure=df["PS"].values * units("hPa"),
+        temperature=df["TS"].values * units("degC"),
+        dewpoint=df["dewpoint"].values * units("degC"),
+    ).to("K")
+    return df
+
+
 def wk84_sounding(
     U_s: float,
     q_v0: float,
@@ -289,7 +316,8 @@ def wk84_sounding(
     q_v0_rhs = mpc.relative_humidity_from_mixing_ratio(
         wk_ps, wk_Ts, q_v0 * units("g/kg")
     ).to("")
-    wk_rhs = np.where(q_v0_rhs < 1, q_v0_rhs, wk_rhs)
+    wk_rhs[:p_idx_900hpa] = np.minimum(q_v0_rhs[:p_idx_900hpa], 1.0)
+    # wk_rhs = np.where(q_v0_rhs < 1, q_v0_rhs, wk_rhs)
 
     wk_df = pd.DataFrame({
         "PS": wk_ps,
@@ -299,7 +327,7 @@ def wk84_sounding(
         "VS": wk_V,
     })
 
-    return pd.DataFrame({
+    df = pd.DataFrame({
         "z": z_levels,
         "PS": np.interp(z_levels, wk_zs, wk_df["PS"]),
         "TS": np.interp(z_levels, wk_zs, wk_df["TS"]),
@@ -307,3 +335,5 @@ def wk84_sounding(
         "US": np.interp(z_levels, wk_zs, wk_df["US"]),
         "VS": np.interp(z_levels, wk_zs, wk_df["VS"]),
     })
+
+    return df

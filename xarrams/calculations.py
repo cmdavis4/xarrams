@@ -8,6 +8,7 @@ model output fields using MetPy.
 from __future__ import annotations
 
 import xarray as xr
+import pandas as pd
 import metpy.calc as mpc
 import metpy.constants as mpconstants
 from metpy.units import units
@@ -72,7 +73,18 @@ def calculate_thermodynamic_variables(
     ]
 
     def vars_are_present(names: list[str]) -> bool:
-        return all(x in ds.data_vars for x in names)
+        if not passed_dataframe:
+            return all(x in ds.data_vars for x in names)
+        else:
+            # This will work for a dict, which is what we coerce pandas to
+            return all(x in ds for x in names)
+
+    # If this is pandas, convert it to a dict of arrays so we don't have to
+    # add .values to every index into a variable
+    passed_dataframe = isinstance(ds, pd.DataFrame)
+
+    if passed_dataframe:
+        ds = ds.to_dict(orient="list")
 
     if not vars_are_present(needed_vars) and fail_if_missing_vars:
         raise ValueError(
@@ -112,9 +124,6 @@ def calculate_thermodynamic_variables(
             .pint.dequantify()
         )
 
-    if vars_are_present(["DN0"]):
-        ds["air_mass"] = ds["DN0"] * 500**2 * ds["z"].diff(dim="z")
-
     if vars_are_present(["P", "T", "RV"]):
         ds["RH"] = mpc.relative_humidity_from_mixing_ratio(
             ds["P"] * units("hPa"), ds["T"] * units("K"), ds["RV"]
@@ -128,12 +137,6 @@ def calculate_thermodynamic_variables(
 
     if vars_are_present(["THETA", "RV", "R_condensate"]):
         ds["theta_rho"] = ds["THETA"] * (1 + 0.608 * ds["RV"] - ds["R_condensate"])
-
-    if vars_are_present(["theta_rho"]) and "x" in ds.dims and "y" in ds.dims:
-        tr_layer_mean = ds["theta_rho"].mean(["x", "y"])
-        ds["buoyancy"] = (
-            mpconstants.g * (ds["theta_rho"] - tr_layer_mean) / tr_layer_mean
-        ).pint.dequantify()
 
     if vars_are_present(["RCP", "RRP"]):
         ds["R_liquid"] = ds["RCP"] + ds["RRP"]
@@ -165,7 +168,21 @@ def calculate_thermodynamic_variables(
             .pint.dequantify()
         )
 
-    return ds
+    # Variables that are calculated using xarray functionality
+    if not passed_dataframe:
+        if vars_are_present(["theta_rho"]) and "x" in ds.dims and "y" in ds.dims:
+            tr_layer_mean = ds["theta_rho"].mean(["x", "y"])
+            ds["buoyancy"] = (
+                mpconstants.g * (ds["theta_rho"] - tr_layer_mean) / tr_layer_mean
+            ).pint.dequantify()
+
+        if vars_are_present(["DN0"]):
+            ds["air_mass"] = ds["DN0"] * 500**2 * ds["z"].diff(dim="z")
+
+    if passed_dataframe:
+        return pd.DataFrame(ds)
+    else:
+        return ds
 
 
 def calculate_derived_variables(storm_ds: xr.Dataset) -> xr.Dataset:

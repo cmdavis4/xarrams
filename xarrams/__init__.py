@@ -43,6 +43,9 @@ from .execution import (
     build_rams_directory_structure,
 )
 
+# --- CM1 ---------------------------------------------------------------------
+from . import cm1
+
 # --- Calculations ------------------------------------------------------------
 from .calculations import (
     calculate_bsr_variables,
@@ -111,4 +114,6 @@ __all__ = [
     # Dask
     "dask_diagnostics",
     "reload_intermediate",
+    # Submodules
+    "cm1",
 ]
