@@ -160,14 +160,14 @@ def plot_sounding(
         )
     skewt.plot(column_df["PS"].values, column_df["dewpoint"].values, "blue")
 
-    wk_parcel_path = mpc.parcel_profile(
+    parcel_Ts = mpc.parcel_profile(
         column_df["PS"].values * units("hPa"),
         column_df["TS"].iloc[0].item() * units("degC"),
         column_df["dewpoint"].iloc[0].item() * units("degC"),
     )
     skewt.plot(
         column_df["PS"],
-        wk_parcel_path,
+        parcel_Ts.to("degC").magnitude,
         color="grey",
         linestyle="dashed",
         linewidth=2,
@@ -230,8 +230,8 @@ def calculate_sounding_derived_vars(df):
 def wk84_sounding(
     U_s: float,
     q_v0: float,
-    veering: bool,
-    z_levels: Union[np.ndarray, list[float]],
+    veering: bool = False,
+    z_levels: Union[np.ndarray, list[float]] = None,
     shear_layer_depth: float = 4000 * units("m"),
     z_tropopause: float = 12_000 * units("m"),
     theta_tropopause: float = 343 * units("K"),
@@ -280,6 +280,7 @@ def wk84_sounding(
     # This is intended to be as exact a translation of CM1's implementation of this
     # sounding as possible
     # Thermodynamic constants — matched to RAMS rconstants for consistency.
+
     C_p = 1004.0 * units("J/kg/K")  # J/(kg·K)
     R_d = 287.0 * units("J/kg/K")  # J/(kg·K)
     p0 = 1000.0 * units("hPa")  # hPa
@@ -294,46 +295,44 @@ def wk84_sounding(
         total_press=p_sfc,
         temperature=T_sfc,
     )
-    theta_v_sfc = mpc.virtual_potential_temperature(
-        pressure=p_sfc,
-        temperature=T_sfc,
-        mixing_ratio=qv_sfc,
-        molecular_weight_ratio=1 / reps,
-    )
+    theta_v_sfc = theta_0 * (1.0 + qv_sfc * reps) / (1.0 + qv_sfc)
 
     # Initialize z values we'll use
-    zs = np.arange(
+    internal_zs = np.arange(
         0,
         (max_height + 1 * units("m")).to("m").magnitude,
         step=z_increment.to("m").magnitude,
     ) * units("m")
 
     # Prescribe theta and RH, from which we'll then diagnose q_v and pressure
-    tropopause_z_ix = np.argmax(zs >= z_tropopause)
+    tropopause_z_ix = np.argmax(internal_zs >= z_tropopause)
     # We'll just fill the whole array with the below-tropopause formula and then
     # overwrite the values above the tropopause
-    thetas = theta_0 + (theta_tropopause - theta_0) * (zs / z_tropopause) ** 1.25
-    rhs = 1.0 - 0.75 * (zs / z_tropopause) ** 1.25
+    thetas = (
+        theta_0 + (theta_tropopause - theta_0) * (internal_zs / z_tropopause) ** 1.25
+    )
+    rhs = 1.0 - 0.75 * (internal_zs / z_tropopause) ** 1.25
     thetas[tropopause_z_ix:] = theta_tropopause * np.exp(
-        (mpconstants.g / (T_tropopause * C_p)) * (zs[tropopause_z_ix:] - z_tropopause)
+        (mpconstants.g / (T_tropopause * C_p))
+        * (internal_zs[tropopause_z_ix:] - z_tropopause)
     )
     rhs[tropopause_z_ix:] = 0.25
 
     # Initialize mixing ratios and pressures
-    qvs = np.zeros(len(zs))
-    pis = np.zeros(len(zs))
+    qvs = np.zeros(len(internal_zs))
+    pis = np.zeros(len(internal_zs))
 
     # CM1 does a hardcoded 20 iterations
     for _ in range(20):
         theta_vs = thetas * (1 + reps * qvs) / (1 + qvs)
         # For pressure, integrate over the vertical, starting from this
-        pis[0] = pi_sfc - mpconstants.g * zs[0] / (
+        pis[0] = pi_sfc - mpconstants.g * internal_zs[0] / (
             C_p * 0.5 * (theta_v_sfc + theta_vs[0])
         )
-        for z_ix in range(1, len(zs)):
-            pis[z_ix] = pis[z_ix - 1] - mpconstants.g * (zs[z_ix] - zs[z_ix - 1]) / (
-                C_p * 0.5 * (theta_vs[z_ix] + theta_vs[z_ix - 1])
-            )
+        for z_ix in range(1, len(internal_zs)):
+            pis[z_ix] = pis[z_ix - 1] - mpconstants.g * (
+                internal_zs[z_ix] - internal_zs[z_ix - 1]
+            ) / (C_p * 0.5 * (theta_vs[z_ix] + theta_vs[z_ix - 1]))
         Ps = p0 * (pis ** (C_p / R_d))
         Ts = mpc.temperature_from_potential_temperature(
             pressure=Ps, potential_temperature=thetas
@@ -343,10 +342,12 @@ def wk84_sounding(
         # Cap it at q_v0
         qvs = np.minimum(qvs, q_v0)
     # Convert this back to an RH; I assume this is just for full consistency?
-    rhs = qvs / q_vsat
+    rhs = mpc.relative_humidity_from_mixing_ratio(
+        pressure=Ps, temperature=Ts, mixing_ratio=qvs
+    )
 
     # Wind shear (Seigel & van den Heever 2014 pressure-based formulation).
-    shear_layer_top_z_idx = np.argmin(np.abs(zs - shear_layer_depth))
+    shear_layer_top_z_idx = np.argmin(np.abs(internal_zs - shear_layer_depth))
     if veering:
         V_s = U_s / 2
         pressure_norm = (Ps - Ps[0]) / (Ps[shear_layer_top_z_idx] - Ps[0])
@@ -356,18 +357,28 @@ def wk84_sounding(
         wk_V[shear_layer_top_z_idx + 1 :] = wk_V[shear_layer_top_z_idx]
     else:
         linear_winds = np.linspace(0, U_s, shear_layer_top_z_idx)
-        wk_U = np.zeros(len(zs))
+        wk_U = np.zeros(len(internal_zs))
         wk_U[:shear_layer_top_z_idx] = linear_winds
         wk_U[shear_layer_top_z_idx:] = linear_winds[-1]
         wk_V = np.zeros(len(wk_U))
 
-    df = pd.DataFrame({
-        "z": z_levels,
-        "PS": np.interp(z_levels, zs, Ps.to("hPa").magnitude),
-        "TS": np.interp(z_levels, zs, Ts.to("degC").magnitude),
-        "RTS": np.interp(z_levels, zs, rhs * 100.0),  # frac → percent
-        "US": np.interp(z_levels, zs, wk_U),
-        "VS": np.interp(z_levels, zs, wk_V),
-    })
+    if z_levels is not None:
+        df = pd.DataFrame({
+            "z": z_levels,
+            "PS": np.interp(z_levels, internal_zs, Ps.to("hPa").magnitude),
+            "TS": np.interp(z_levels, internal_zs, Ts.to("degC").magnitude),
+            "RTS": np.interp(z_levels, internal_zs, rhs * 100.0),  # frac → percent
+            "US": np.interp(z_levels, internal_zs, wk_U),
+            "VS": np.interp(z_levels, internal_zs, wk_V),
+        })
+    else:
+        df = pd.DataFrame({
+            "z": internal_zs,
+            "PS": Ps.to("hPa").magnitude,
+            "TS": Ts.to("degC").magnitude,
+            "RTS": rhs * 100.0,  # frac → percent
+            "US": wk_U,
+            "VS": wk_V,
+        })
 
     return df
