@@ -162,7 +162,7 @@ def plot_sounding(
 
     wk_parcel_path = mpc.parcel_profile(
         column_df["PS"].values * units("hPa"),
-        column_df["TS"].iloc[0].item() * units("K"),
+        column_df["TS"].iloc[0].item() * units("degC"),
         column_df["dewpoint"].iloc[0].item() * units("degC"),
     )
     skewt.plot(
@@ -232,14 +232,14 @@ def wk84_sounding(
     q_v0: float,
     veering: bool,
     z_levels: Union[np.ndarray, list[float]],
-    shear_layer_depth: float = 4000,
-    z_tropopause: float = 12_000,
-    theta_tropopause: float = 343,
-    T_tropopause: float = 213,
-    theta_0: float = 300,
-    p_sfc: float = 100_000,
-    max_height: float = 23_000,
-    z_increment: float = 10,
+    shear_layer_depth: float = 4000 * units("m"),
+    z_tropopause: float = 12_000 * units("m"),
+    theta_tropopause: float = 343 * units("K"),
+    T_tropopause: float = 213 * units("K"),
+    theta_0: float = 300 * units("K"),
+    p_sfc: float = 100_000 * units("Pa"),
+    max_height: float = 23_000 * units("m"),
+    z_increment: float = 10 * units("m"),
 ) -> pd.DataFrame:
     """Generate an idealized Weisman & Klemp (1984) atmospheric sounding.
 
@@ -276,76 +276,98 @@ def wk84_sounding(
 
         Seigel, R. B. & van den Heever, S. C. (2014). *Mon. Wea. Rev.*, 142, 1087–1104.
     """
+
+    # This is intended to be as exact a translation of CM1's implementation of this
+    # sounding as possible
     # Thermodynamic constants — matched to RAMS rconstants for consistency.
-    C_p = 1004.0  # J/(kg·K)
-    R_d = 287.0  # J/(kg·K)
-    p_00 = 100_000.0  # Pa
-    g = mpconstants.earth_gravity.to("m/s^2").magnitude
+    C_p = 1004.0 * units("J/kg/K")  # J/(kg·K)
+    R_d = 287.0 * units("J/kg/K")  # J/(kg·K)
+    p0 = 1000.0 * units("hPa")  # hPa
+    reps = 461.5 / 287.0  # = R_v / R_d, ≈ 1.608
 
-    z_levels = np.asarray(z_levels)
-    wk_zs = np.arange(0, max_height, z_increment)
-
-    # Analytic θ (WK84 eq 1) — no flattening; lower troposphere is ~2 K/km stable.
-    wk_theta = np.where(
-        wk_zs <= z_tropopause,
-        theta_0 + (theta_tropopause - theta_0) * (wk_zs / z_tropopause) ** (5.0 / 4),
-        theta_tropopause * np.exp(g * (wk_zs - z_tropopause) / (C_p * T_tropopause)),
+    # Calculate derived quantities for the surface
+    pi_sfc = (p_sfc / p0) ** (R_d / C_p)
+    T_sfc = mpc.temperature_from_potential_temperature(
+        pressure=p_sfc, potential_temperature=theta_0
+    )
+    qv_sfc = mpc.saturation_mixing_ratio(
+        total_press=p_sfc,
+        temperature=T_sfc,
+    )
+    theta_v_sfc = mpc.virtual_potential_temperature(
+        pressure=p_sfc,
+        temperature=T_sfc,
+        mixing_ratio=qv_sfc,
+        molecular_weight_ratio=1 / reps,
     )
 
-    # Analytic RH (WK84 eq 2).
-    wk_rh = np.where(
-        wk_zs <= z_tropopause,
-        1.0 - 0.75 * (wk_zs / z_tropopause) ** (5.0 / 4),
-        0.25,
-    )
+    # Initialize z values we'll use
+    zs = np.arange(
+        0,
+        (max_height + 1 * units("m")).to("m").magnitude,
+        step=z_increment.to("m").magnitude,
+    ) * units("m")
 
-    # Single-pass hydrostatic integration of dπ/dz = -g / (c_p θ_v) with θ_v ≈ θ.
-    # Moisture changes θ_v by at most ~0.85% (since q_v ≤ ~0.014), so the
-    # q_v feedback into pressure is well below WK84's precision. No closed form
-    # for the integral of 1/θ exists with this θ profile, so we trapezoidally
-    # integrate on the uniform construction grid.
-    dpi_dz = -g / (C_p * wk_theta)
-    pi_sfc = (p_sfc / p_00) ** (R_d / C_p)
-    wk_pi = pi_sfc + np.concatenate((
-        [0.0],
-        np.cumsum(0.5 * (dpi_dz[:-1] + dpi_dz[1:]) * np.diff(wk_zs)),
-    ))
-    wk_p = p_00 * wk_pi ** (C_p / R_d)  # Pa
-    wk_T = wk_theta * wk_pi  # K
-
-    # q_v0 cap (WK84): clip q_v at q_v0 wherever RH·q_sat would exceed it.
-    # This is what produces the apparent well-mixed BL.
-    q_sat = (
-        mpc.saturation_mixing_ratio(wk_p * units("Pa"), wk_T * units("K"))
-        .to("kg/kg")
-        .magnitude
+    # Prescribe theta and RH, from which we'll then diagnose q_v and pressure
+    tropopause_z_ix = np.argmax(zs >= z_tropopause)
+    # We'll just fill the whole array with the below-tropopause formula and then
+    # overwrite the values above the tropopause
+    thetas = theta_0 + (theta_tropopause - theta_0) * (zs / z_tropopause) ** 1.25
+    rhs = 1.0 - 0.75 * (zs / z_tropopause) ** 1.25
+    thetas[tropopause_z_ix:] = theta_tropopause * np.exp(
+        (mpconstants.g / (T_tropopause * C_p)) * (zs[tropopause_z_ix:] - z_tropopause)
     )
-    q_v = np.minimum(wk_rh * q_sat, q_v0 * 1e-3)  # q_v0 g/kg → kg/kg
-    wk_rh = q_v / q_sat
+    rhs[tropopause_z_ix:] = 0.25
+
+    # Initialize mixing ratios and pressures
+    qvs = np.zeros(len(zs))
+    pis = np.zeros(len(zs))
+
+    # CM1 does a hardcoded 20 iterations
+    for _ in range(20):
+        theta_vs = thetas * (1 + reps * qvs) / (1 + qvs)
+        # For pressure, integrate over the vertical, starting from this
+        pis[0] = pi_sfc - mpconstants.g * zs[0] / (
+            C_p * 0.5 * (theta_v_sfc + theta_vs[0])
+        )
+        for z_ix in range(1, len(zs)):
+            pis[z_ix] = pis[z_ix - 1] - mpconstants.g * (zs[z_ix] - zs[z_ix - 1]) / (
+                C_p * 0.5 * (theta_vs[z_ix] + theta_vs[z_ix - 1])
+            )
+        Ps = p0 * (pis ** (C_p / R_d))
+        Ts = mpc.temperature_from_potential_temperature(
+            pressure=Ps, potential_temperature=thetas
+        )
+        q_vsat = mpc.saturation_mixing_ratio(total_press=Ps, temperature=Ts)
+        qvs = rhs * q_vsat
+        # Cap it at q_v0
+        qvs = np.minimum(qvs, q_v0)
+    # Convert this back to an RH; I assume this is just for full consistency?
+    rhs = qvs / q_vsat
 
     # Wind shear (Seigel & van den Heever 2014 pressure-based formulation).
-    shear_layer_top_z_idx = np.argmin(np.abs(wk_zs - shear_layer_depth))
+    shear_layer_top_z_idx = np.argmin(np.abs(zs - shear_layer_depth))
     if veering:
         V_s = U_s / 2
-        pressure_norm = (wk_p - wk_p[0]) / (wk_p[shear_layer_top_z_idx] - wk_p[0])
+        pressure_norm = (Ps - Ps[0]) / (Ps[shear_layer_top_z_idx] - Ps[0])
         wk_U = (-U_s / 2) * (np.cos(np.pi * pressure_norm) - 1)
         wk_U[shear_layer_top_z_idx + 1 :] = wk_U[shear_layer_top_z_idx]
         wk_V = V_s * np.sin(np.pi * pressure_norm)
         wk_V[shear_layer_top_z_idx + 1 :] = wk_V[shear_layer_top_z_idx]
     else:
         linear_winds = np.linspace(0, U_s, shear_layer_top_z_idx)
-        wk_U = np.zeros(len(wk_zs))
+        wk_U = np.zeros(len(zs))
         wk_U[:shear_layer_top_z_idx] = linear_winds
         wk_U[shear_layer_top_z_idx:] = linear_winds[-1]
         wk_V = np.zeros(len(wk_U))
 
     df = pd.DataFrame({
         "z": z_levels,
-        "PS": np.interp(z_levels, wk_zs, wk_p / 100.0),  # Pa → hPa
-        "TS": np.interp(z_levels, wk_zs, wk_T - 273.15),  # K → °C
-        "RTS": np.interp(z_levels, wk_zs, wk_rh * 100.0),  # frac → percent
-        "US": np.interp(z_levels, wk_zs, wk_U),
-        "VS": np.interp(z_levels, wk_zs, wk_V),
+        "PS": np.interp(z_levels, zs, Ps.to("hPa").magnitude),
+        "TS": np.interp(z_levels, zs, Ts.to("degC").magnitude),
+        "RTS": np.interp(z_levels, zs, rhs * 100.0),  # frac → percent
+        "US": np.interp(z_levels, zs, wk_U),
+        "VS": np.interp(z_levels, zs, wk_V),
     })
 
     return df
