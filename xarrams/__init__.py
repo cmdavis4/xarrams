@@ -46,6 +46,9 @@ from .execution import (
 # --- CM1 ---------------------------------------------------------------------
 from . import cm1
 
+# --- Build ---------------------------------------------------------------------
+from . import build
+
 # --- Calculations ------------------------------------------------------------
 from .calculations import (
     calculate_bsr_variables,
@@ -116,4 +119,5 @@ __all__ = [
     "reload_intermediate",
     # Submodules
     "cm1",
+    "build",
 ]

@@ -363,6 +363,7 @@ def wk84_sounding(
         wk_V = np.zeros(len(wk_U))
 
     if z_levels is not None:
+        internal_zs = internal_zs.to("m").magnitude
         df = pd.DataFrame({
             "z": z_levels,
             "PS": np.interp(z_levels, internal_zs, Ps.to("hPa").magnitude),

@@ -101,6 +101,8 @@ def build_rams_from_template(
         raise FileNotFoundError(f"RAMS source directory not found: {rams_source}")
 
     # --- 1. Copy entire source tree to destination ---
+    print(str(rams_source))
+    print(str(dest))
     # Use rsync to only copy changed files so the build runs faster
     # Need to have it do individual files if the destination directory doesn't
     # already exist, in order to get the right structure, but don't want this
@@ -116,54 +118,20 @@ def build_rams_from_template(
     print(" ".join(rsync_cmd_args))
     subprocess.run(rsync_cmd_args)
 
-    # --- 2. Update RAMS_ROOT and RAMS_VERSION in include.mk ---
+    # --- 2. Render Jinja2 templates in all Fortran source files and include.mk ---
+    env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+
+    # Render include.mk with dest and run_name
     include_mk = dest / "include.mk"
     if not include_mk.exists():
         raise FileNotFoundError(f"include.mk not found in {dest}")
 
     include_mk_text = include_mk.read_text()
+    template = env.from_string(include_mk_text)
+    rendered = template.render(dest=str(dest), run_name=name)
+    include_mk.write_text(rendered)
 
-    # Parse the existing version number (e.g. "6.3.04" from "RAMS_VERSION=6.3.04_thermals")
-    version_line_match = re.search(
-        r"^RAMS_VERSION\s*=\s*(.*)$",
-        include_mk_text,
-        flags=re.MULTILINE,
-    )
-    if version_line_match is None:
-        raise ValueError("Could not find RAMS_VERSION definition in include.mk")
-
-    version_number_match = re.search(
-        r"(\d+(?:\.\d+)+)",
-        version_line_match.group(1),
-    )
-    if version_number_match is None:
-        raise ValueError(
-            "Could not extract numeric version from RAMS_VERSION line: "
-            f"{version_line_match.group(0)!r}"
-        )
-
-    rams_version = f"{version_number_match.group(1)}_{name}"
-
-    # Apply both substitutions in memory, then write once
-    include_mk_text = re.sub(
-        r"^RAMS_ROOT\s*=.*$",
-        f"RAMS_ROOT={dest}",
-        include_mk_text,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    include_mk_text = re.sub(
-        r"^RAMS_VERSION\s*=.*$",
-        f"RAMS_VERSION={rams_version}",
-        include_mk_text,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    include_mk.write_text(include_mk_text)
-
-    # --- 3. Render Jinja2 templates in all Fortran source files ---
-    env = jinja2.Environment(undefined=jinja2.StrictUndefined)
-
+    # Render Fortran source files
     for pattern in ("**/*.f90", "**/*.F90"):
         for f90_file in dest.glob(pattern):
             source = f90_file.read_text()
@@ -174,7 +142,7 @@ def build_rams_from_template(
             rendered = template.render(**template_vars)
             f90_file.write_text(rendered)
 
-    # --- 4. Compile ---
+    # --- 3. Compile ---
     if make:
         build_dir = dest / "bin.rams"
         if not build_dir.is_dir():
@@ -194,7 +162,7 @@ def build_rams_from_template(
             text=True,
         )
 
-        # --- 5. Find and return the executable path ---
+        # --- 4. Find and return the executable path ---
         # The Makefile produces an executable named rams-{RAMS_VERSION} in bin.rams/
         # Find it by looking for the symlink named "rams" which points to the real executable
         rams_symlink = build_dir / "rams"

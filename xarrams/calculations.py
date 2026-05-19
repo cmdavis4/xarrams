@@ -204,10 +204,11 @@ def calculate_derived_variables(storm_ds: xr.Dataset) -> xr.Dataset:
     storm_ds["x"] = storm_ds["x"] - min(storm_ds["x"])
     storm_ds["y"] = storm_ds["y"] - min(storm_ds["y"])
 
-    storm_ds = storm_ds.assign_coords(
-        t_minutes=(storm_ds["time"] - storm_ds["time"].values[0]).dt.total_seconds()
-        / 60
-    )
+    if "time" in storm_ds.dims:
+        storm_ds = storm_ds.assign_coords(
+            t_minutes=(storm_ds["time"] - storm_ds["time"].values[0]).dt.total_seconds()
+            / 60
+        )
 
     storm_ds["vertical_vorticity"] = storm_ds["VC"].differentiate("x") - storm_ds[
         "UC"
