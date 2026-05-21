@@ -375,3 +375,138 @@ class TestUnitRegistry:
         # These custom units should be defined in rams_pint_units.txt
         q = ureg.Quantity(1, "fraction")
         assert q.magnitude == 1
+
+
+# ---------------------------------------------------------------------------
+# WK84 sounding vs. reference CM1 output
+# ---------------------------------------------------------------------------
+
+
+class TestWK84SoundingAgainstCM1:
+    """Verify wk84_sounding matches a saved CM1 reference run.
+
+    Reference: CM1 r21.1, U_s=5 m/s, q_v0=11 g/kg, p_sfc=100 000 Pa,
+    stored at xarrams/data/cm1_wk_sounding_qv-11.nc.
+    """
+
+    @staticmethod
+    def _build_comparison():
+        import metpy.calc as mpc
+        import xarray as xr
+        from metpy.units import units
+
+        from xarrams.soundings import wk84_sounding
+
+        gen = wk84_sounding(
+            U_s=5 * units("m/s"),
+            q_v0=11 * units("g/kg"),
+            p_sfc=100_000 * units("Pa"),
+        )
+        gen["dewpoint"] = (
+            mpc.dewpoint_from_relative_humidity(
+                temperature=gen["TS"].values * units("degC"),
+                relative_humidity=gen["RTS"].values * units("percent"),
+            )
+            .to("degC")
+            .magnitude
+        )
+        gen["theta"] = (
+            mpc.potential_temperature(
+                pressure=gen["PS"].values * units("hPa"),
+                temperature=gen["TS"].values * units("degC"),
+            )
+            .to("K")
+            .magnitude
+        )
+
+        data_path = (
+            Path(__file__).resolve().parent.parent
+            / "xarrams"
+            / "data"
+            / "cm1_wk_sounding_qv-11.nc"
+        )
+        cm1 = xr.open_dataset(data_path)
+        cm1_df = pd.DataFrame({
+            "z": cm1["zh"].values,
+            "PS": cm1["prs"].values / 100.0,
+        })
+        cm1_df["TS"] = (
+            mpc.temperature_from_potential_temperature(
+                pressure=cm1_df["PS"].values * units("hPa"),
+                potential_temperature=cm1["th"].values * units("K"),
+            )
+            .to("degC")
+            .magnitude
+        )
+        cm1_df["theta"] = cm1["th"].values
+        vp = mpc.vapor_pressure(
+            cm1_df["PS"].values * units("hPa"),
+            cm1["qv"].values * units("kg/kg"),
+        )
+        cm1_df["dewpoint"] = mpc.dewpoint(vp).to("degC").magnitude
+        cm1_df["RTS"] = (
+            mpc.relative_humidity_from_dewpoint(
+                temperature=cm1_df["TS"].values * units("degC"),
+                dewpoint=cm1_df["dewpoint"].values * units("degC"),
+            )
+            .to("percent")
+            .magnitude
+        )
+
+        interp = {"z": cm1_df["z"].values}
+        for col in ["TS", "theta", "dewpoint", "RTS"]:
+            interp[col] = np.interp(cm1_df["z"].values, gen["z"].values, gen[col].values)
+        gen_interp = pd.DataFrame(interp)
+        return gen_interp, cm1_df
+
+    Z_TROPOPAUSE_M = 12_000.0
+
+    @classmethod
+    def _assert_thermo_close(cls, z, diff, ref_K, label):
+        """Stratified tolerance for T-like quantities (in K).
+
+        - Troposphere (z <= z_tropopause): |diff| < 0.1 K AND relative < 0.1%.
+        - Stratosphere: relative < 0.1% only; absolute relaxed because theta
+          grows exponentially in the stratosphere by construction in WK84.
+        """
+        abs_err = np.abs(diff)
+        rel_err = abs_err / np.abs(ref_K)
+        trop = z <= cls.Z_TROPOPAUSE_M
+        strat = ~trop
+        ok_trop = (abs_err[trop] < 0.1) & (rel_err[trop] < 1e-3)
+        ok_strat = rel_err[strat] < 1e-3
+        assert ok_trop.all(), (
+            f"{label} (troposphere): {(~ok_trop).sum()} points exceed bounds; "
+            f"max |diff|={abs_err[trop].max():.4g} K, "
+            f"max rel={rel_err[trop].max():.4g}"
+        )
+        assert ok_strat.all(), (
+            f"{label} (stratosphere): {(~ok_strat).sum()} points exceed rel<1e-3; "
+            f"max |diff|={abs_err[strat].max():.4g} K, "
+            f"max rel={rel_err[strat].max():.4g}"
+        )
+
+    def test_temperature_close(self):
+        gen, cm1 = self._build_comparison()
+        diff = gen["TS"].values - cm1["TS"].values
+        ref_K = cm1["TS"].values + 273.15
+        self._assert_thermo_close(cm1["z"].values, diff, ref_K, "T")
+
+    def test_dewpoint_close(self):
+        gen, cm1 = self._build_comparison()
+        diff = gen["dewpoint"].values - cm1["dewpoint"].values
+        ref_K = cm1["dewpoint"].values + 273.15
+        self._assert_thermo_close(cm1["z"].values, diff, ref_K, "dewpoint")
+
+    def test_theta_close(self):
+        gen, cm1 = self._build_comparison()
+        diff = gen["theta"].values - cm1["theta"].values
+        self._assert_thermo_close(cm1["z"].values, diff, cm1["theta"].values, "theta")
+
+    def test_relative_humidity_close(self):
+        gen, cm1 = self._build_comparison()
+        diff = gen["RTS"].values - cm1["RTS"].values
+        # RH is a bounded percent, no exponential amplification: 1 pp absolute
+        # everywhere is the physically meaningful bound.
+        abs_err = np.abs(diff)
+        assert abs_err.max() < 1.0, f"max |dRH| = {abs_err.max():.4g} %"

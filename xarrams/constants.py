@@ -10,6 +10,8 @@ import pandas as pd
 from pint import UnitRegistry
 import pint_xarray
 
+from metpy.units import units
+
 # ---------------------------------------------------------------------------
 # Datetime format
 # ---------------------------------------------------------------------------
@@ -85,3 +87,13 @@ ureg: UnitRegistry = UnitRegistry()
 
 ureg.load_definitions(str(Path(__file__).parent / "data" / "rams_pint_units.txt"))
 pint_xarray.setup_registry(ureg)
+
+
+# Physical constants with values used by RAMS
+# ================================
+
+C_p = 1004.0 * units("J/kg/K")  # J/(kg·K)
+R_d = 287.0 * units("J/kg/K")  # J/(kg·K)
+p0 = 1000.0 * units("hPa")  # hPa
+reps = 461.5 / 287.0  # = R_v / R_d, ≈ 1.608
+

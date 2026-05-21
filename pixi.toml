@@ -17,6 +17,8 @@ pint = "*"
 pint-xarray = "*"
 tqdm = "*"
 matplotlib = "*"
+jinja2 = "*"
+netcdf4 = "*"
 
 [feature.test.dependencies]
 # Testing tools
@@ -32,6 +34,9 @@ ipython = "*"
 jupyter = "*"
 
 [environments]
+# Default environment includes testing so `pixi run test` works out of the box
+default = {features = ["test"], solve-group = "minimal"}
+
 # Minimal environment - core dependencies + testing
 minimal = {features = ["test"], solve-group = "minimal"}
 
