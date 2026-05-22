@@ -114,7 +114,8 @@ def parse_rams_stdout_walltimes(
     with Path(rams_stdout_path).open("r") as f:
         for line in f:
             match = re.search(
-                r"Timestep.*Sim time\(sec\)=\s*([0-9\.]+).*Wall time\(sec\)=\s*([0-9\.]+)",
+                r"Timestep.*Sim time\(sec\)=\s*([0-9\.]+).*Wall"
+                r" time\(sec\)=\s*([0-9\.]+)",
                 line,
             )
             if match:
@@ -132,3 +133,22 @@ def parse_rams_stdout_walltimes(
         ax.set_ylabel("Walltime per timestep (s)")
 
     return sim_times, walltimes
+
+
+def check_rams_run_statuses(parent_dir):
+
+    statuses = {}
+
+    for run_dir in parent_dir.iterdir():
+        if run_dir.is_dir():
+            stderr = run_dir / "stdout" / "current.stderr"
+            if stderr.exists():
+                with stderr.open("r") as f:
+                    lines = f.read().splitlines()
+                    if lines:
+                        status = lines[-1]
+                    else:
+                        status = "ok"
+                    statuses[run_dir.name] = status
+
+    return dict(sorted(statuses.items()))

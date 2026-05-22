@@ -204,19 +204,6 @@ def calculate_derived_variables(storm_ds: xr.Dataset) -> xr.Dataset:
     storm_ds["x"] = storm_ds["x"] - min(storm_ds["x"])
     storm_ds["y"] = storm_ds["y"] - min(storm_ds["y"])
 
-    if "time" in storm_ds.dims:
-        storm_ds = storm_ds.assign_coords(
-            t_minutes=(storm_ds["time"] - storm_ds["time"].values[0]).dt.total_seconds()
-            / 60
-        )
-
-    storm_ds["vertical_vorticity"] = storm_ds["VC"].differentiate("x") - storm_ds[
-        "UC"
-    ].differentiate("y")
-    storm_ds["divergence"] = storm_ds["UC"].differentiate("x") + storm_ds[
-        "VC"
-    ].differentiate("y")
-
     for var in ["x", "y"]:
         storm_ds[f"{var}_middle"] = storm_ds[var].max().values / 2
         storm_ds[f"{var}_middle_ix"] = len(storm_ds[var]) // 2
@@ -247,12 +234,16 @@ def calculate_bsr_variables(
     Raises:
         ValueError: If *base_state* contains a time dimension.
     """
-    if "time" in base_state.dims:
-        raise ValueError(
-            "base_state dataset must not have a time dimension, to avoid confusion"
-        )
 
     ds = ds.copy()
+    if "time" in base_state.coords:
+        if "time" in ds.coords:
+            ds = ds.assign_coords(
+                t_minutes=(ds["time"] - base_state["time"]).dt.total_seconds() / 60
+            )
+        # Then drop it from the base state to avoid confusion
+        base_state = base_state.squeeze()
+
     base_state = base_state.mean(["x", "y"])
     for var in bsr_variables or DEFAULT_BSR_VARIABLES:
         if var in ds.data_vars:

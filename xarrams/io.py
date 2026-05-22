@@ -21,6 +21,7 @@ from carlee_tools.types_carlee_tools import PathLike, DatetimeLike
 from carlee_tools.utils import dt_to_str, str_to_dt
 
 from .constants import (
+    CM1_TO_RAMS_VARIABLE_NAMES,
     HEADER_NAME_DIMENSION_DICT,
     RAMS_ANALYSIS_FILE_DIMENSIONS_DICT,
     RAMS_FILENAME_DT_STRFTIME_FORMAT,
@@ -485,3 +486,195 @@ def read_rams_output(
         ds[var] = ds[var].assign_attrs(rams_attrs_dicts.get(var, {}))
 
     return ds
+
+
+CM1_DEFAULT_START_DATETIME: str = "2000-01-01 00:00:00"
+"""Default anchor for converting CM1's seconds-since-start to absolute datetimes."""
+
+_CM1_SCALAR_GRID_RENAME: dict[str, str] = {"xh": "x", "yh": "y", "zh": "z"}
+"""CM1 scalar-grid dimensions renamed to match RAMS conventions. Flux-grid
+dimensions (``xf``/``yf``/``zf``) are left as-is."""
+
+
+def read_cm1_output(
+    input_filenames: list[PathLike],
+    start_datetime: DatetimeLike = CM1_DEFAULT_START_DATETIME,
+    rename_dims: bool = True,
+    drop_vars: Optional[list[str]] = None,
+    keep_vars: Optional[list[str]] = None,
+    preprocess: Optional[Callable[..., xr.Dataset]] = None,
+    time_dim_name: str = "time",
+    parallel: bool = True,
+    chunks: Union[str, dict[str, int]] = "auto",
+    concatenate: bool = True,
+    silent: bool = False,
+    open_dataset_kwargs: Optional[dict[str, Any]] = None,
+) -> Union[xr.Dataset, list[xr.Dataset]]:
+    """Read one or more CM1 netCDF output files into an xarray Dataset.
+
+    CM1 output already carries a ``time`` dimension (seconds since the start
+    of the simulation) and proper spatial coordinates: ``xh``/``yh``/``zh``
+    on the scalar grid and ``xf``/``yf``/``zf`` on the flux grid. This
+    function concatenates files along ``time``, converts the raw seconds to
+    absolute datetimes anchored at *start_datetime*, and optionally renames
+    the scalar-grid dims to ``x``/``y``/``z`` to match the convention used
+    by :func:`read_rams_output`. Flux-grid dims are left untouched.
+
+    Args:
+        input_filenames: Paths to CM1 ``cm1out_*.nc`` output files.
+        start_datetime: Absolute datetime corresponding to t=0 in the simulation.
+        rename_dims: If True, rename ``xh``/``yh``/``zh`` → ``x``/``y``/``z``.
+        drop_vars: Variables to exclude. Mutually exclusive with *keep_vars*.
+        keep_vars: Variables to keep (all others dropped). Mutually exclusive with *drop_vars*.
+        preprocess: Callable applied to each single-file dataset before concatenation.
+            Receives the dataset *after* any rename, so callers should refer to
+            ``x``/``y``/``z`` when ``rename_dims=True``.
+        time_dim_name: Name of the time dimension in CM1 output.
+        parallel: Use dask for parallel reading (requires dask).
+        chunks: Chunk specification passed to ``xr.open_mfdataset``.
+        concatenate: Whether to concatenate files along the time dimension.
+        silent: Suppress progress output.
+        open_dataset_kwargs: Extra keyword arguments for ``xr.open_dataset``.
+
+    Returns:
+        An xarray Dataset (or list of Datasets if ``concatenate=False`` and
+        more than one file was passed).
+
+    Raises:
+        ValueError: If both *drop_vars* and *keep_vars* are provided.
+    """
+    drop_vars = drop_vars or []
+    keep_vars = keep_vars or []
+    open_dataset_kwargs = open_dataset_kwargs or {}
+
+    input_filenames = [Path(x) for x in list(input_filenames)]
+
+    if drop_vars and keep_vars:
+        raise ValueError("Cannot pass both drop_vars and keep_vars")
+
+    def maybe_print(x: str) -> None:
+        if not silent:
+            print(x)
+
+    if parallel:
+        try:
+            import dask  # noqa: F401
+        except ImportError:
+            print(
+                "dask must be installed to use the `parallel` option; falling back to"
+                " serial"
+            )
+            parallel = False
+
+    if keep_vars:
+        maybe_print("Determining drop_vars from keep_vars...")
+        present_vars = xr.open_dataset(input_filenames[0]).data_vars
+        drop_vars = [x for x in present_vars if x not in keep_vars]
+
+    rename_map = _CM1_SCALAR_GRID_RENAME if rename_dims else {}
+
+    def _sanitized_preprocess(ds: xr.Dataset) -> xr.Dataset:
+        if rename_map:
+            applicable = {
+                old: new
+                for old, new in rename_map.items()
+                if old in ds.dims or old in ds.coords
+            }
+            if applicable:
+                ds = ds.rename(applicable)
+        if preprocess:
+            ds = preprocess(ds)
+        return ds
+
+    if parallel:
+        maybe_print(
+            f"Reading and concatenating {len(input_filenames)} individual timestep"
+            " outputs..."
+        )
+        from contextlib import nullcontext
+
+        from dask.diagnostics import ProgressBar
+
+        open_ds_context_manager = nullcontext if silent else ProgressBar
+        with open_ds_context_manager():
+            ds = xr.open_mfdataset(
+                input_filenames,
+                concat_dim=time_dim_name,
+                combine="nested",
+                preprocess=_sanitized_preprocess,
+                drop_variables=drop_vars,
+                parallel=True,
+                chunks=chunks,
+                **open_dataset_kwargs,
+            )
+    else:
+        maybe_print(f"Reading {len(input_filenames)} individual timestep outputs...")
+        to_concat: list[xr.Dataset] = []
+        wrapped_to_read = tqdm(input_filenames) if not silent else input_filenames
+        for ds_path in wrapped_to_read:
+            ds = xr.open_dataset(
+                ds_path,
+                drop_variables=drop_vars,
+                **open_dataset_kwargs,
+            )
+            ds = _sanitized_preprocess(ds)
+            to_concat.append(ds)
+        if len(to_concat) > 1:
+            if concatenate:
+                maybe_print("Concatenating along time...")
+                ds = xr.concat(to_concat, dim=time_dim_name)
+            else:
+                return to_concat
+        else:
+            ds = to_concat[0]
+
+    start_ts = pd.Timestamp(start_datetime)
+    seconds = np.asarray(ds[time_dim_name].values, dtype="float64")
+    absolute_times = start_ts + pd.to_timedelta(seconds, unit="s")
+    ds = ds.assign_coords({time_dim_name: absolute_times})
+
+    # Tag each timestep with its source file when there's one timestep per file
+    # (the CM1 default); skip otherwise rather than guess the mapping.
+    if len(input_filenames) == ds.sizes.get(time_dim_name, -1):
+        ds = ds.assign_coords({
+            "source_file": (time_dim_name, [str(f) for f in input_filenames]),
+        })
+
+    ds = ds.sortby(time_dim_name)
+
+    if parallel:
+        ds = ds.unify_chunks()
+
+    return ds
+
+
+def rename_cm1_to_rams_vars(
+    ds: xr.Dataset,
+    mapping: Optional[dict[str, str]] = None,
+) -> xr.Dataset:
+    """Rename CM1 data variables in *ds* to their RAMS counterparts.
+
+    Only variables present in both *ds* and *mapping* are renamed; everything
+    else passes through untouched, so it's safe to call on a CM1 dataset that
+    contains variables outside the mapping (or on a partially-renamed dataset).
+
+    The default mapping (:data:`CM1_TO_RAMS_VARIABLE_NAMES`) covers winds
+    interpolated to scalar points (``uinterp``/``vinterp``/``winterp`` →
+    ``UC``/``VC``/``WC``), potential temperature, water vapor, hydrometeor
+    mixing ratios and number concentrations, TKE, and surface precipitation
+    rate. Variables without a clean correspondence are intentionally omitted.
+
+    Args:
+        ds: Dataset with CM1 variable names.
+        mapping: Mapping from CM1 → RAMS names. Defaults to
+            :data:`CM1_TO_RAMS_VARIABLE_NAMES`. Pass a custom mapping to
+            override (e.g. for a different microphysics scheme).
+
+    Returns:
+        Dataset with applicable variables renamed.
+    """
+    mapping = mapping if mapping is not None else CM1_TO_RAMS_VARIABLE_NAMES
+    applicable = {cm1: rams for cm1, rams in mapping.items() if cm1 in ds.data_vars}
+    if not applicable:
+        return ds
+    return ds.rename(applicable)

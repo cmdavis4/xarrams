@@ -48,11 +48,50 @@ HEADER_NAME_DIMENSION_DICT: dict[str, str] = {
 # Variable lists
 # ---------------------------------------------------------------------------
 
-DEFAULT_BSR_VARIABLES: list[str] = ["THETA", "UC", "VC", "THETA_v", "THETA_rho", "P"]
+DEFAULT_BSR_VARIABLES: list[str] = [
+    "THETA",
+    "UC",
+    "VC",
+    "theta_e",
+    "theta_v",
+    "theta_rho",
+    "T",
+    "RH",
+    "P",
+]
 """Default variables for which to compute base-state-relative perturbations."""
 
 SOUNDING_NAMELIST_VARIABLES: list[str] = ["PS", "TS", "RTS", "US", "VS"]
 """Variables that make up an initial sounding in a RAMSIN namelist."""
+
+CM1_TO_RAMS_VARIABLE_NAMES: dict[str, str] = {
+    # Winds: RAMS UC/VC/WC live on the scalar grid, matching CM1's "*interp"
+    # variants. The native staggered u/v/w have no clean RAMS counterpart.
+    "uinterp": "UC",
+    "vinterp": "VC",
+    "winterp": "WC",
+    "th": "THETA",
+    "qv": "RV",
+    # Hydrometeor mixing ratios. The ice-phase mapping is scheme-dependent
+    # and approximate — Morrison/NSSL's qi/qs/qg don't partition the same
+    # way as RAMS' 6-category ice; consumers using a different scheme
+    # should pass a custom mapping to rename_cm1_to_rams_vars.
+    "qc": "RCP",
+    "qr": "RRP",
+    "qi": "RPP",
+    "qs": "RSP",
+    "qg": "RGP",
+    "nci": "CPP",
+    "ncr": "CRP",
+    "ncs": "CSP",
+    "ncg": "CGP",
+    "tke": "TKEP",
+    "prate": "PCPRR",
+}
+"""Default mapping from CM1 variable names to their RAMS counterparts. Only
+includes variables with a clear, units-compatible correspondence; ambiguous
+or unit-mismatched pairs (e.g. CM1 ``prs`` vs. Exner ``PI``, accumulated
+``rain`` in cm vs. ``ACCPR`` in kg/m^2) are intentionally omitted."""
 
 HYDROMETEOR_SPECIES_FULL_NAMES: dict[str, str] = {
     "PP": "pristine ice",
