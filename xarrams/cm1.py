@@ -67,6 +67,6 @@ def generate_cm1_namelist(
                 f"Field {parameter_name} not found in template namelist.input"
             )
 
-    namelist_path = cm1_run_dir / f"namelist.input.{namelist_name}"
+    namelist_path = cm1_run_dir / "output" / "namelist.input"
     namelist_path.write_text(namelist)
     return namelist_path

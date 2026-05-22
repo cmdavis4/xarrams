@@ -18,7 +18,7 @@ import xarray as xr
 
 from carlee_tools.types_carlee_tools import PathLike
 
-from .constants import SOUNDING_NAMELIST_VARIABLES
+from .constants import SOUNDING_NAMELIST_VARIABLES, C_p, R_d, p0, reps
 
 
 def format_sounding_field_ramsin_str(
@@ -227,19 +227,49 @@ def calculate_sounding_derived_vars(df):
     return df
 
 
+_WK_DEFAULT_THETA_0 = 300 * units("K")
+_WK_DEFAULT_Z_TROPOPAUSE = 12_000 * units("m")
+_WK_DEFAULT_THETA_TROPOPAUSE = 343 * units("K")
+_WK_DEFAULT_T_TROPOPAUSE = 213 * units("K")
+
+
+def _WK_DEFAULT_THETA_CALCULATION(
+    z,
+    theta_0=_WK_DEFAULT_THETA_0,
+    z_tropopause=_WK_DEFAULT_Z_TROPOPAUSE,
+    theta_tropopause=_WK_DEFAULT_THETA_TROPOPAUSE,
+    T_tropopause=_WK_DEFAULT_T_TROPOPAUSE,
+):
+    return np.where(
+        z < z_tropopause,
+        theta_0 + (theta_tropopause - theta_0) * (z / z_tropopause) ** 1.25,
+        theta_tropopause
+        * np.exp((mpconstants.g / (T_tropopause * C_p)) * (z - z_tropopause)),
+    )
+
+
+def _WK_DEFAULT_RH_CALCULATION(
+    z,
+    z_tropopause=_WK_DEFAULT_Z_TROPOPAUSE,
+):
+    return np.where(z < z_tropopause, 1.0 - 0.75 * (z / z_tropopause) ** 1.25, 0.25)
+
+
 def wk84_sounding(
     U_s: float,
     q_v0: float,
     veering: bool = False,
     z_levels: Union[np.ndarray, list[float]] = None,
     shear_layer_depth: float = 4000 * units("m"),
-    z_tropopause: float = 12_000 * units("m"),
-    theta_tropopause: float = 343 * units("K"),
-    T_tropopause: float = 213 * units("K"),
-    theta_0: float = 300 * units("K"),
-    p_sfc: float = 100_000 * units("Pa"),
+    z_tropopause: float = _WK_DEFAULT_Z_TROPOPAUSE,
+    theta_tropopause: float = _WK_DEFAULT_THETA_TROPOPAUSE,
+    T_tropopause: float = _WK_DEFAULT_T_TROPOPAUSE,
+    theta_0: float = _WK_DEFAULT_THETA_0,
+    p_sfc: float = p0,
     max_height: float = 23_000 * units("m"),
     z_increment: float = 10 * units("m"),
+    theta_fn: callable = _WK_DEFAULT_THETA_CALCULATION,
+    rh_fn: callable = _WK_DEFAULT_RH_CALCULATION,
 ) -> pd.DataFrame:
     """Generate an idealized Weisman & Klemp (1984) atmospheric sounding.
 
@@ -281,11 +311,6 @@ def wk84_sounding(
     # sounding as possible
     # Thermodynamic constants — matched to RAMS rconstants for consistency.
 
-    C_p = 1004.0 * units("J/kg/K")  # J/(kg·K)
-    R_d = 287.0 * units("J/kg/K")  # J/(kg·K)
-    p0 = 1000.0 * units("hPa")  # hPa
-    reps = 461.5 / 287.0  # = R_v / R_d, ≈ 1.608
-
     # Calculate derived quantities for the surface
     pi_sfc = (p_sfc / p0) ** (R_d / C_p)
     T_sfc = mpc.temperature_from_potential_temperature(
@@ -304,19 +329,15 @@ def wk84_sounding(
         step=z_increment.to("m").magnitude,
     ) * units("m")
 
-    # Prescribe theta and RH, from which we'll then diagnose q_v and pressure
-    tropopause_z_ix = np.argmax(internal_zs >= z_tropopause)
-    # We'll just fill the whole array with the below-tropopause formula and then
-    # overwrite the values above the tropopause
-    thetas = (
-        theta_0 + (theta_tropopause - theta_0) * (internal_zs / z_tropopause) ** 1.25
+    # The potential temperature and RH are analytically prescribed, from which we'll then diagnose q_v and pressure
+    thetas = theta_fn(
+        z=internal_zs,
+        theta_0=theta_0,
+        z_tropopause=z_tropopause,
+        theta_tropopause=theta_tropopause,
+        T_tropopause=T_tropopause,
     )
-    rhs = 1.0 - 0.75 * (internal_zs / z_tropopause) ** 1.25
-    thetas[tropopause_z_ix:] = theta_tropopause * np.exp(
-        (mpconstants.g / (T_tropopause * C_p))
-        * (internal_zs[tropopause_z_ix:] - z_tropopause)
-    )
-    rhs[tropopause_z_ix:] = 0.25
+    rhs = rh_fn(z=internal_zs, z_tropopause=z_tropopause)
 
     # Initialize mixing ratios and pressures
     qvs = np.zeros(len(internal_zs))

@@ -12,6 +12,7 @@ import pandas as pd
 import metpy.calc as mpc
 import metpy.constants as mpconstants
 from metpy.units import units
+import matplotlib.pyplot as plt
 
 from .constants import DEFAULT_BSR_VARIABLES
 
@@ -249,3 +250,305 @@ def calculate_bsr_variables(
         if var in ds.data_vars:
             ds[f"{var}_bsr"] = ds[var] - base_state[var]
     return ds
+
+
+import numpy as np
+import pint
+from scipy.integrate import cumulative_trapezoid
+
+ureg = pint.UnitRegistry()
+Q = ureg.Quantity
+
+
+def flux_to_tendency(
+    grid_spacing,
+    atten_length,
+    flux_amp,
+    cp=1004 * units("J/(kg*K)"),
+    surface_pressure=1000 * units("hPa"),
+    surface_temp=298 * units("K"),
+    R_d=287 * units("J/(kg*K)"),
+):
+    """
+    Approximate K/hr potential-temperature tendency produced in the lowest
+    model layer by a Klaasen-and-Clark surface flux forcing.
+
+    Assumes zmn(2) ≈ 0 (lowest layer starts at the surface) and the layer has
+    thickness `grid_spacing`. The vertical-decay factor for the lowest layer
+    is then (1 − exp(−dz/L)), and the heating rate is
+
+        dθ/dt = flux_amp · (1 − exp(−dz/L)) / (ρ · dz · cp).
+
+    For dz ≪ L this asymptotes to flux_amp / (ρ · L · cp); grid spacing drops
+    out. Density is computed from the ideal-gas law at the given surface
+    pressure and temperature.
+
+    Parameters
+    ----------
+    grid_spacing : pint Quantity (length)
+        Vertical thickness of the lowest model layer.
+    atten_length : pint Quantity (length)
+        K&C vertical e-folding depth (= zt at iflux_k_atten in RAMS).
+    flux_amp : pint Quantity (power / area)
+        Peak column-integrated surface flux (= flux_amp_wm2 in RAMSIN).
+    """
+    rho = (surface_pressure / (R_d * surface_temp)).to("kg/m**3")
+    ratio = (grid_spacing / atten_length).to("dimensionless").magnitude
+    decay = 1.0 - np.exp(-ratio)
+    layer_flux = flux_amp * decay  # W/m² deposited in the lowest layer
+    return (layer_flux / (rho * grid_spacing * cp)).to("K/hour")
+
+
+def tendency_to_flux(
+    grid_spacing,
+    atten_length,
+    tendency,
+    cp=1004 * units("J/(kg*K)"),
+    surface_pressure=1000 * units("hPa"),
+    surface_temp=298 * units("K"),
+    R_d=287 * units("J/(kg*K)"),
+):
+    """Inverse of `flux_to_tendency`: required flux_amp for a desired tendency."""
+    rho = (surface_pressure / (R_d * surface_temp)).to("kg/m**3")
+    ratio = (grid_spacing / atten_length).to("dimensionless").magnitude
+    decay = 1.0 - np.exp(-ratio)
+    return (tendency * rho * grid_spacing * cp / decay).to("W/m**2")
+
+
+def integrated_dtheta(
+    grid_spacing,
+    z_atten_length,
+    x_atten_length,
+    flux_amp,
+    rampup_duration,
+    peak_duration,
+    rampdown_duration,
+    cp=1004 * units("J/(kg*K)"),
+    surface_pressure=1000 * units("hPa"),
+    surface_temp=298 * units("K"),
+    R_d=287 * units("J/(kg*K)"),
+    timestep=1 * units("s"),
+):
+    """
+    Total potential-temperature change imparted to the lowest model layer
+    over a full ramp-up / peak / ramp-down K&C surface flux pulse, plus
+    diagnostic plots including a 2D x-z cross section of max heating rate
+    and total ΔΘ.
+
+    The temporal factor matches the RAMS branching in ruser.f90: linear
+    ramp 0→1 over [tstart, tmax), constant 1 over [tmax, tdecay), linear
+    ramp 1→0 over [tdecay, tend), 0 otherwise.
+
+    Vertical and horizontal decay match the K&C distribution used in RAMS:
+        vert_decay(k)  = exp(-(z_k - z_0)/L_z) − exp(-(z_{k+1} - z_0)/L_z)
+        horiz_gauss(x) = exp(−(x / L_x)²)
+
+    Returns
+    -------
+    pint Quantity (K)
+        Cumulative ΔΘ at the end of the pulse in the lowest layer at the
+        forcing center.
+    """
+    # Build time grid + temporal factor, matching ruser.f90 branching
+    tstart = 0 * units("s")
+    tmax = tstart + rampup_duration
+    tdecay = tmax + peak_duration
+    tend = tdecay + rampdown_duration
+    times = np.arange(
+        0, tend.m_as("s") + timestep.m_as("s"), timestep.m_as("s")
+    ) * units("s")
+    t = times.m_as("s")
+    ts, tm, td, te = (
+        tstart.m_as("s"),
+        tmax.m_as("s"),
+        tdecay.m_as("s"),
+        tend.m_as("s"),
+    )
+    temporal_factor = np.where(
+        t < ts,
+        0.0,
+        np.where(
+            t < tm,
+            (t - ts) / (tm - ts),
+            np.where(
+                t < td,
+                1.0,
+                np.where(t < te, 1.0 - (t - td) / (te - td), 0.0),
+            ),
+        ),
+    )
+    column_fluxes = temporal_factor * flux_amp
+
+    # K&C lowest-layer decay factor — matches flux_to_tendency in xrr.calculations
+    decay = 1.0 - np.exp(-(grid_spacing / z_atten_length).m_as("dimensionless"))
+    layer_fluxes = column_fluxes * decay
+
+    # scipy strips units, so hand it plain magnitudes in known units and
+    # re-attach the result unit (W/m^2 * s = J/m^2)
+    def integrate_flux(fluxes):
+        return cumulative_trapezoid(
+            y=fluxes.m_as("W/m^2"),
+            x=times.m_as("s"),
+            initial=0,
+        ) * units("J/m^2")
+
+    integrated_column_flux = integrate_flux(column_fluxes)
+    integrated_layer_flux = integrate_flux(layer_fluxes)
+
+    rho = (surface_pressure / (R_d * surface_temp)).to("kg/m^3")
+    dTheta_dt = (layer_fluxes / (rho * grid_spacing * cp)).to("K/hr")
+    integrated_dTheta = (integrated_layer_flux / (rho * grid_spacing * cp)).to("K")
+
+    # 2D x-z grids for cross sections — extend several atten lengths in each direction
+    n_z = int(np.ceil((6 * z_atten_length / grid_spacing).m_as("dimensionless")))
+    z_edges = np.arange(n_z + 1) * grid_spacing
+    z_centers = 0.5 * (z_edges[:-1] + z_edges[1:])
+    ze = z_edges.m_as("m")
+    Lz = z_atten_length.m_as("m")
+    vert_decay_per_layer = np.exp(-ze[:-1] / Lz) - np.exp(-ze[1:] / Lz)
+
+    n_x_half = int(np.ceil((4 * x_atten_length / grid_spacing).m_as("dimensionless")))
+    x_centers = np.arange(-n_x_half, n_x_half + 1) * grid_spacing
+    xc = x_centers.m_as("m")
+    Lx = x_atten_length.m_as("m")
+    horiz_gauss = np.exp(-((xc / Lx) ** 2))
+
+    # 2D fields: outer product of vert_decay (n_z,) and horiz_gauss (n_x,)
+    decay_2d = np.outer(vert_decay_per_layer, horiz_gauss)  # (n_z, n_x)
+    heating_rate_max_2d = (flux_amp * decay_2d / (rho * grid_spacing * cp)).to("K/hr")
+    total_dtheta_2d = (
+        integrated_column_flux[-1] * decay_2d / (rho * grid_spacing * cp)
+    ).to("K")
+
+    fig, axs = plt.subplots(
+        ncols=2,
+        nrows=4,
+        figsize=(8, 12),
+        layout="constrained",
+        squeeze=False,
+    )
+
+    axs[0, 0].plot(times, column_fluxes)
+    axs[0, 1].plot(times, integrated_column_flux)
+    axs[1, 0].plot(times, layer_fluxes)
+    axs[1, 1].plot(times, integrated_layer_flux)
+    axs[2, 0].plot(times, dTheta_dt)
+    axs[2, 1].plot(times, integrated_dTheta)
+
+    axs[0, 0].set_title(r"$F$ (column)")
+    axs[0, 1].set_title(r"Total energy imparted (column)")
+    axs[1, 0].set_title(r"$F$ (lowest model layer)")
+    axs[1, 1].set_title(r"Total energy imparted (lowest model layer)")
+    axs[2, 0].set_title(r"$d\theta/dt$")
+    axs[2, 1].set_title(r"$\Delta \theta$")
+
+    im0 = axs[3, 0].pcolormesh(
+        x_centers.m_as("km"),
+        z_centers.m_as("m"),
+        heating_rate_max_2d.m_as("K/hr"),
+        shading="auto",
+    )
+    fig.colorbar(im0, ax=axs[3, 0], label="K/hr")
+    axs[3, 0].set_title(r"Max instantaneous $d\theta/dt$")
+    axs[3, 0].set_xlabel("x (km)")
+    axs[3, 0].set_ylabel("z (m)")
+
+    im1 = axs[3, 1].pcolormesh(
+        x_centers.m_as("km"),
+        z_centers.m_as("m"),
+        total_dtheta_2d.m_as("K"),
+        shading="auto",
+    )
+    fig.colorbar(im1, ax=axs[3, 1], label="K")
+    axs[3, 1].set_title(r"Total $\Delta \theta$")
+    axs[3, 1].set_xlabel("x (km)")
+    axs[3, 1].set_ylabel("z (m)")
+
+    return integrated_dTheta[-1]
+
+
+def bubble_perturbation_field(
+    theta_amp,
+    moisture_amp,
+    horizontal_radius,
+    vertical_radius,
+    vertical_center,
+    grid_spacing=50 * units("m"),
+    base_theta=300 * units("K"),
+    base_rv=0.01,
+):
+    """
+    Plot 2D x-z cross sections of θ and θ_v from a RAMSIN cosine-squared
+    bubble (ibubble=2/4 in ruser.f90), allowing `vertical_center` near or
+    below the surface for bubbles that intersect the ground.
+
+    Shape factor at each (x, z):
+        r_norm = sqrt((x / horizontal_radius)² + ((z - vertical_center) / vertical_radius)²)
+        factor = cos²(π · r_norm / 2)   for r_norm < 1, else 0
+    θ(x,z)   = base_theta + theta_amp · factor
+    r_v(x,z) = base_rv · (1 + moisture_amp · factor)
+    θ_v(x,z) ≈ θ · (1 + 0.608 · r_v)
+
+    Parameters
+    ----------
+    theta_amp : pint Quantity (K)
+        BTHP — peak θ perturbation at bubble center.
+    moisture_amp : float
+        BRTP — fractional peak r_v perturbation (e.g. 0.2 = +20%).
+    horizontal_radius, vertical_radius : pint Quantity (length)
+        Bubble half-widths (bubradx, bubradz).
+    vertical_center : pint Quantity (length)
+        Height of bubble center above ground; can be small or negative
+        so that the bubble is partially below z=0.
+    base_theta : pint Quantity (K)
+    base_rv : float (kg/kg)
+        Background state used so θ_v has a meaningful absolute value.
+    """
+    # x-z grid: extend 1.5x bubble radius horizontally; vertically from
+    # z=0 (ground) up through the top of the bubble
+    x_extent = 1.5 * horizontal_radius
+    n_x_half = int(np.ceil((x_extent / grid_spacing).m_as("dimensionless")))
+    x_centers = np.arange(-n_x_half, n_x_half + 1) * grid_spacing
+
+    z_top = vertical_center + 1.5 * vertical_radius
+    n_z = int(np.ceil((z_top / grid_spacing).m_as("dimensionless")))
+    z_centers = (np.arange(n_z) + 0.5) * grid_spacing
+
+    X, Z = np.meshgrid(x_centers.m_as("m"), z_centers.m_as("m"), indexing="xy")
+    rx = X / horizontal_radius.m_as("m")
+    rz = (Z - vertical_center.m_as("m")) / vertical_radius.m_as("m")
+    r_norm = np.sqrt(rx**2 + rz**2)
+    factor = np.where(r_norm < 1, np.cos(np.pi * r_norm / 2) ** 2, 0.0)
+
+    theta = base_theta.m_as("K") + theta_amp.m_as("K") * factor  # K
+    rv = base_rv * (1 + moisture_amp * factor)  # kg/kg
+    theta_v = theta * (1 + 0.608 * rv)  # K
+    theta_v_base = base_theta.m_as("K") * (1 + 0.608 * base_rv)
+
+    fig, axs = plt.subplots(
+        ncols=2, nrows=1, figsize=(10, 4), layout="constrained", squeeze=False
+    )
+
+    im0 = axs[0, 0].pcolormesh(
+        x_centers.m_as("km"),
+        z_centers.m_as("m"),
+        theta - base_theta.m_as("K"),
+        shading="auto",
+    )
+    fig.colorbar(im0, ax=axs[0, 0], label="K")
+    axs[0, 0].set_title(r"$\Delta \theta$")
+    axs[0, 0].set_xlabel("x (km)")
+    axs[0, 0].set_ylabel("z (m)")
+
+    im1 = axs[0, 1].pcolormesh(
+        x_centers.m_as("km"),
+        z_centers.m_as("m"),
+        theta_v - theta_v_base,
+        shading="auto",
+    )
+    fig.colorbar(im1, ax=axs[0, 1], label="K")
+    axs[0, 1].set_title(r"$\Delta \theta_v$")
+    axs[0, 1].set_xlabel("x (km)")
+    axs[0, 1].set_ylabel("z (m)")
+
+    return theta, theta_v
