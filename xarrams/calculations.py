@@ -169,6 +169,19 @@ def calculate_thermodynamic_variables(
             .pint.dequantify()
         )
 
+    if vars_are_present(["PCPRR"]):
+        ds["PCPRR_mm_hr"] = (
+            ((ds["PCPRR"] * units("kg m^-2 s^-1")) / mpconstants.density_water)
+            .pint.to("mm/hr")
+            .pint.dequantify()
+        )
+    if vars_are_present(["ACCPR"]):
+        ds["ACCPR_mm"] = (
+            ((ds["ACCPR"] * units("kg m^-2")) / mpconstants.density_water)
+            .pint.to("mm")
+            .pint.dequantify()
+        )
+
     # Variables that are calculated using xarray functionality
     if not passed_dataframe:
         if vars_are_present(["theta_rho"]) and "x" in ds.dims and "y" in ds.dims:
