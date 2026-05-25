@@ -91,13 +91,14 @@ def generate_ramsin(
     parameters = dict(parameters)
 
     rams_run_dir = Path(rams_run_dir)
+    # Defaults are written as relative paths so the generated RAMSIN is
+    # portable. RAMS resolves these relative to its cwd, which the slurm
+    # submission script and run_rams both set to rams_run_dir.
     rams_input_dir = (
-        Path(rams_input_dir) if rams_input_dir is not None else rams_run_dir / "input"
+        Path(rams_input_dir) if rams_input_dir is not None else Path("input")
     )
     rams_output_dir = (
-        Path(rams_output_dir)
-        if rams_output_dir is not None
-        else rams_run_dir / "output"
+        Path(rams_output_dir) if rams_output_dir is not None else Path("output")
     )
     ramsin_template_path = Path(ramsin_template_path)
 
@@ -133,7 +134,7 @@ def generate_ramsin(
         if n_subs == 0:
             raise ValueError(f"Field {parameter_name} not found in template RAMSIN")
 
-    ramsin_path = rams_run_dir / f"RAMSIN.{ramsin_name}"
+    ramsin_path = rams_run_dir / "RAMSIN"
     ramsin_path.write_text(ramsin)
     return ramsin_path
 
@@ -143,6 +144,7 @@ def run_rams(
     stdout_path: PathLike,
     rams_executable_path: PathLike,
     machsfile_path: Optional[PathLike] = None,
+    cwd: Optional[PathLike] = None,
     log_command: bool = True,
     log_ramsin: bool = True,
     dry_run: bool = False,
@@ -184,7 +186,16 @@ def run_rams(
         ValueError: If the resolved RAMSIN path exceeds 256 characters
             (a RAMS limitation).
     """
-    if len(str(Path(ramsin_path).resolve())) > 256:
+    # cwd is what relative paths in the RAMSIN and on the command line resolve
+    # against. Defaults to the RAMSIN's parent directory (which is the run
+    # dir under the standard layout written by generate_ramsin).
+    cwd = Path(cwd).resolve() if cwd is not None else Path(ramsin_path).resolve().parent
+    # Resolve relative file paths against cwd for Python-side reads. The
+    # command line still passes the original (possibly relative) form so the
+    # subprocess sees paths the way they're written in the user's submit.
+    ramsin_path_abs = (cwd / ramsin_path).resolve()
+
+    if len(str(ramsin_path_abs)) > 256:
         raise ValueError("RAMS cannot handle ramsin paths longer than 256 characters")
 
     rams_executable_path = str(Path(rams_executable_path).resolve())
@@ -192,17 +203,17 @@ def run_rams(
     if not machsfile_path:
         command = RAMS_SERIAL_COMMAND_TEMPLATE.format(
             rams_executable_path=rams_executable_path,
-            ramsin_path=str(Path(ramsin_path).resolve()),
+            ramsin_path=str(ramsin_path),
         )
     else:
-        with Path(machsfile_path).open("r") as f:
+        with (cwd / machsfile_path).open("r") as f:
             nodelist = f.readlines()
         n_cores = sum(int(s.split(":")[1]) for s in nodelist)
         command = RAMS_MPIEXEC_COMMAND_TEMPLATE.format(
-            machsfile_path=str(Path(machsfile_path).resolve()),
+            machsfile_path=str(machsfile_path),
             n_cores=n_cores,
             rams_executable_path=rams_executable_path,
-            ramsin_path=str(Path(ramsin_path).resolve()),
+            ramsin_path=str(ramsin_path),
         )
 
     write_mode = "w"
@@ -226,7 +237,7 @@ def run_rams(
 
     if log_ramsin:
         with Path(stdout_path).open(write_mode) as stdout_f:
-            with Path(ramsin_path).open("r") as ramsin_f:
+            with ramsin_path_abs.open("r") as ramsin_f:
                 stdout_f.write(
                     "##############################\n         BEGIN"
                     " RAMSIN\n##############################\n"
@@ -247,7 +258,7 @@ def run_rams(
     with Path(stdout_path).open(write_mode) as stdout_f:
         if asynchronous:
             return subprocess.Popen(
-                command.split(" "), stdout=stdout_f, start_new_session=True
+                command.split(" "), stdout=stdout_f, start_new_session=True, cwd=cwd
             )
         else:
-            return subprocess.run(command.split(" "), stdout=stdout_f)
+            return subprocess.run(command.split(" "), stdout=stdout_f, cwd=cwd)
