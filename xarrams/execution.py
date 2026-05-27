@@ -6,8 +6,10 @@ and running RAMS simulations (serial or MPI-parallel).
 
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional, Union
@@ -134,7 +136,7 @@ def generate_ramsin(
         if n_subs == 0:
             raise ValueError(f"Field {parameter_name} not found in template RAMSIN")
 
-    ramsin_path = rams_run_dir / "RAMSIN"
+    ramsin_path = rams_run_dir / f"RAMSIN.{ramsin_name}"
     ramsin_path.write_text(ramsin)
     return ramsin_path
 
@@ -262,3 +264,171 @@ def run_rams(
             )
         else:
             return subprocess.run(command.split(" "), stdout=stdout_f, cwd=cwd)
+
+
+def stdout_path_for(base_dir: PathLike, ramsin_name: str) -> Path:
+    """Return the conventional stdout log path for a given RAMSIN name."""
+    return Path(base_dir) / "stdout" / f"{ramsin_name}"
+
+
+_TIMEUNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _parse_ramsin_field(ramsin_text: str, name: str) -> Optional[str]:
+    """Return the raw RAMSIN value for *name* (sans quotes), or ``None``."""
+    match = re.search(
+        rf"^\s*{name}\s*=\s*(.*?)\s*,",
+        ramsin_text,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        return None
+    return match.group(1).strip().strip("'\"")
+
+
+def _require_ramsin_field(ramsin_text: str, name: str) -> str:
+    value = _parse_ramsin_field(ramsin_text, name)
+    if value is None:
+        raise ValueError(f"RAMSIN field {name} not found")
+    return value
+
+
+def _initial_run_end_datetime(ramsin_text: str) -> _dt.datetime:
+    """Compute the end datetime of a run from its RAMSIN's start + TIMMAX."""
+    iyear = int(_require_ramsin_field(ramsin_text, "IYEAR1"))
+    imonth = int(_require_ramsin_field(ramsin_text, "IMONTH1"))
+    idate = int(_require_ramsin_field(ramsin_text, "IDATE1"))
+    itime = int(_require_ramsin_field(ramsin_text, "ITIME1"))  # HHMM
+    timmax = float(_require_ramsin_field(ramsin_text, "TIMMAX"))
+    timeunit = (_parse_ramsin_field(ramsin_text, "TIMEUNIT") or "h").lower()
+    if timeunit not in _TIMEUNIT_SECONDS:
+        raise ValueError(f"Unrecognized TIMEUNIT {timeunit!r}")
+
+    start = _dt.datetime(iyear, imonth, idate, itime // 100, itime % 100)
+    return start + _dt.timedelta(seconds=timmax * _TIMEUNIT_SECONDS[timeunit])
+
+
+def setup_history_restart(
+    base_dir: PathLike,
+    extension: _dt.timedelta,
+    history_file_head_path: Optional[PathLike] = None,
+    ramsin_template_path: Optional[PathLike] = None,
+    initial_ramsin_name: str = "initial",
+    history_ramsin_name: str = "history",
+    parameters: Optional[dict[str, str]] = None,
+    copy_history_seed: bool = True,
+    seed_dir: Optional[PathLike] = None,
+) -> Path:
+    """Generate a HISTORY-restart RAMSIN, optionally copying the seed files.
+
+    Produces ``RAMSIN.{history_ramsin_name}`` alongside the initial RAMSIN
+    in *base_dir*, with ``RUNTYPE='HISTORY'`` and ``HFILIN`` pointed at
+    *history_file_head_path``, and ``TIMMAX`` extended by *extension* past
+    the initial run's end time.
+
+    When the history run's output directory coincides with the directory
+    containing the seed history file, a running restart could overwrite
+    its own HFILIN. To protect against that, when ``copy_history_seed``
+    is ``True`` (default) and that overlap is detected, the head file and
+    all matching grid ``-g*.h5`` files are copied to *seed_dir* (default
+    ``{base_dir}/restart_seeds/{history_ramsin_name}``) and ``HFILIN`` is
+    pointed at the copy.
+
+    Args:
+        base_dir: Run directory (the same one passed to
+            :func:`build_rams_directory_structure`).
+        extension: How much further the history run should simulate past
+            the initial run's end. Added to the initial RAMSIN's
+            ``TIMMAX`` (in its ``TIMEUNIT``) to set the new ``TIMMAX``;
+            the start time is unchanged so TIMMAX remains measured from
+            ``IYEAR1``/``IMONTH1``/``IDATE1``/``ITIME1``.
+        history_file_head_path: Path to the seed file's ``...-head.txt``.
+            If ``None``, inferred from the initial run's end datetime
+            (start + initial ``TIMMAX``) under ``{base_dir}/output``.
+        ramsin_template_path: RAMSIN to use as the template. Defaults to
+            ``{base_dir}/RAMSIN.{initial_ramsin_name}``.
+        initial_ramsin_name: Suffix of the initial run's RAMSIN. Used to
+            locate the default template and to compute end time / new
+            TIMMAX.
+        history_ramsin_name: Suffix used for the generated RAMSIN.
+        parameters: Additional RAMSIN overrides merged on top of the
+            ``RUNTYPE``/``HFILIN``/``TIMMAX`` defaults set here.
+        copy_history_seed: If ``True``, copy the seed files when the
+            history run would write to the directory holding them.
+        seed_dir: Destination for the copy when one is made.
+
+    Returns:
+        Path to the generated ``RAMSIN.{history_ramsin_name}``.
+    """
+    base_dir = Path(base_dir)
+    parameters = dict(parameters) if parameters else {}
+
+    if ramsin_template_path is None:
+        ramsin_template_path = base_dir / f"RAMSIN.{initial_ramsin_name}"
+
+    initial_text = (base_dir / f"RAMSIN.{initial_ramsin_name}").read_text()
+    initial_timmax = float(_require_ramsin_field(initial_text, "TIMMAX"))
+    timeunit = (_parse_ramsin_field(initial_text, "TIMEUNIT") or "h").lower()
+    if timeunit not in _TIMEUNIT_SECONDS:
+        raise ValueError(f"Unrecognized TIMEUNIT {timeunit!r}")
+    new_timmax = (
+        initial_timmax + extension.total_seconds() / _TIMEUNIT_SECONDS[timeunit]
+    )
+
+    if history_file_head_path is None:
+        end_dt = _initial_run_end_datetime(initial_text)
+        initial_output_dir = (base_dir / "output").resolve()
+        datestamp = end_dt.strftime("%Y-%m-%d-%H%M%S")
+        history_file_head_path = initial_output_dir / f"a-A-{datestamp}-head.txt"
+        print(f"Inferred HFILIN as {str(history_file_head_path)}")
+
+    history_file_head_path = Path(history_file_head_path).resolve()
+
+    # The history run's output dir is wherever its AFILEPREF resolves to.
+    # generate_ramsin defaults AFILEPREF to "output/a" (relative to cwd =
+    # base_dir), so by default the history output dir is base_dir/output.
+    if "AFILEPREF" in parameters:
+        afilepref = parameters["AFILEPREF"].strip().strip(",").strip().strip("'\"")
+        history_output_dir = (base_dir / afilepref).resolve().parent
+    else:
+        history_output_dir = (base_dir / "output").resolve()
+
+    seed_overlaps_output = history_file_head_path.parent == history_output_dir
+
+    if copy_history_seed and seed_overlaps_output:
+        if not history_file_head_path.exists():
+            print("HFILIN does not exist, not creating backup")
+            hfilin = history_file_head_path
+        else:
+            if seed_dir is None:
+                seed_dir = base_dir / "restart_seeds" / history_ramsin_name
+            seed_dir = Path(seed_dir)
+            seed_dir.mkdir(parents=True, exist_ok=True)
+
+            basename = history_file_head_path.name[: -len("-head.txt")]
+            copied_head = seed_dir / history_file_head_path.name
+            shutil.copy2(history_file_head_path, copied_head)
+            for h5 in history_file_head_path.parent.glob(f"{basename}-g*.h5"):
+                shutil.copy2(h5, seed_dir / h5.name)
+
+            hfilin = copied_head
+    else:
+        hfilin = history_file_head_path
+
+    parameters.setdefault("RUNTYPE", ramsin_str("HISTORY"))
+    parameters.setdefault("HFILIN", ramsin_str(str(hfilin)))
+    parameters.setdefault("TIMMAX", f"{new_timmax}")
+    for name in ("IAEROHIST", "ITRACHIST"):
+        if name not in parameters:
+            print(
+                f"Setting {name}=0 by default for the history restart;"
+                f" pass parameters={{'{name}': ...}} to override."
+            )
+            parameters[name] = "0"
+
+    return generate_ramsin(
+        ramsin_name=history_ramsin_name,
+        rams_run_dir=base_dir,
+        ramsin_template_path=ramsin_template_path,
+        parameters=parameters,
+    )

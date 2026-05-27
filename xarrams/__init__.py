@@ -44,6 +44,8 @@ from .execution import (
     ramsin_str,
     run_rams,
     build_rams_directory_structure,
+    setup_history_restart,
+    stdout_path_for,
 )
 
 # --- CM1 ---------------------------------------------------------------------
@@ -106,6 +108,8 @@ __all__ = [
     "generate_ramsin",
     "ramsin_str",
     "run_rams",
+    "setup_history_restart",
+    "stdout_path_for",
     # Calculations
     "calculate_bsr_variables",
     "calculate_derived_variables",
