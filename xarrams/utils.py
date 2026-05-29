@@ -137,6 +137,8 @@ def parse_rams_stdout_walltimes(
 
 def check_rams_run_statuses(parent_dir):
 
+    parent_dir = Path(parent_dir)
+
     statuses = {}
 
     for run_dir in parent_dir.iterdir():
@@ -144,10 +146,9 @@ def check_rams_run_statuses(parent_dir):
             stderr = run_dir / "stdout" / "current.stderr"
             if stderr.exists():
                 with stderr.open("r") as f:
-                    lines = f.read().splitlines()
-                    if lines:
-                        status = lines[-1]
-                    else:
+                    status = f.readline().strip()
+                    # If there's nothing in the file, then the status is ok
+                    if not status:
                         status = "ok"
                     statuses[run_dir.name] = status
 
