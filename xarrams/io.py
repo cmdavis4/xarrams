@@ -498,8 +498,6 @@ dimensions (``xf``/``yf``/``zf``) are left as-is."""
 
 def read_cm1_output(
     input_filenames: list[PathLike],
-    start_datetime: DatetimeLike = CM1_DEFAULT_START_DATETIME,
-    rename_dims: bool = True,
     drop_vars: Optional[list[str]] = None,
     keep_vars: Optional[list[str]] = None,
     preprocess: Optional[Callable[..., xr.Dataset]] = None,
@@ -571,17 +569,7 @@ def read_cm1_output(
         present_vars = xr.open_dataset(input_filenames[0]).data_vars
         drop_vars = [x for x in present_vars if x not in keep_vars]
 
-    rename_map = _CM1_SCALAR_GRID_RENAME if rename_dims else {}
-
     def _sanitized_preprocess(ds: xr.Dataset) -> xr.Dataset:
-        if rename_map:
-            applicable = {
-                old: new
-                for old, new in rename_map.items()
-                if old in ds.dims or old in ds.coords
-            }
-            if applicable:
-                ds = ds.rename(applicable)
         if preprocess:
             ds = preprocess(ds)
         return ds
@@ -628,11 +616,6 @@ def read_cm1_output(
         else:
             ds = to_concat[0]
 
-    start_ts = pd.Timestamp(start_datetime)
-    seconds = np.asarray(ds[time_dim_name].values, dtype="float64")
-    absolute_times = start_ts + pd.to_timedelta(seconds, unit="s")
-    ds = ds.assign_coords({time_dim_name: absolute_times})
-
     # Tag each timestep with its source file when there's one timestep per file
     # (the CM1 default); skip otherwise rather than guess the mapping.
     if len(input_filenames) == ds.sizes.get(time_dim_name, -1):
@@ -648,33 +631,33 @@ def read_cm1_output(
     return ds
 
 
-def rename_cm1_to_rams_vars(
-    ds: xr.Dataset,
-    mapping: Optional[dict[str, str]] = None,
-) -> xr.Dataset:
-    """Rename CM1 data variables in *ds* to their RAMS counterparts.
+# def rename_cm1_to_rams_vars(
+#     ds: xr.Dataset,
+#     mapping: Optional[dict[str, str]] = None,
+# ) -> xr.Dataset:
+#     """Rename CM1 data variables in *ds* to their RAMS counterparts.
 
-    Only variables present in both *ds* and *mapping* are renamed; everything
-    else passes through untouched, so it's safe to call on a CM1 dataset that
-    contains variables outside the mapping (or on a partially-renamed dataset).
+#     Only variables present in both *ds* and *mapping* are renamed; everything
+#     else passes through untouched, so it's safe to call on a CM1 dataset that
+#     contains variables outside the mapping (or on a partially-renamed dataset).
 
-    The default mapping (:data:`CM1_TO_RAMS_VARIABLE_NAMES`) covers winds
-    interpolated to scalar points (``uinterp``/``vinterp``/``winterp`` →
-    ``UC``/``VC``/``WC``), potential temperature, water vapor, hydrometeor
-    mixing ratios and number concentrations, TKE, and surface precipitation
-    rate. Variables without a clean correspondence are intentionally omitted.
+#     The default mapping (:data:`CM1_TO_RAMS_VARIABLE_NAMES`) covers winds
+#     interpolated to scalar points (``uinterp``/``vinterp``/``winterp`` →
+#     ``UC``/``VC``/``WC``), potential temperature, water vapor, hydrometeor
+#     mixing ratios and number concentrations, TKE, and surface precipitation
+#     rate. Variables without a clean correspondence are intentionally omitted.
 
-    Args:
-        ds: Dataset with CM1 variable names.
-        mapping: Mapping from CM1 → RAMS names. Defaults to
-            :data:`CM1_TO_RAMS_VARIABLE_NAMES`. Pass a custom mapping to
-            override (e.g. for a different microphysics scheme).
+#     Args:
+#         ds: Dataset with CM1 variable names.
+#         mapping: Mapping from CM1 → RAMS names. Defaults to
+#             :data:`CM1_TO_RAMS_VARIABLE_NAMES`. Pass a custom mapping to
+#             override (e.g. for a different microphysics scheme).
 
-    Returns:
-        Dataset with applicable variables renamed.
-    """
-    mapping = mapping if mapping is not None else CM1_TO_RAMS_VARIABLE_NAMES
-    applicable = {cm1: rams for cm1, rams in mapping.items() if cm1 in ds.data_vars}
-    if not applicable:
-        return ds
-    return ds.rename(applicable)
+#     Returns:
+#         Dataset with applicable variables renamed.
+#     """
+#     mapping = mapping if mapping is not None else CM1_TO_RAMS_VARIABLE_NAMES
+#     applicable = {cm1: rams for cm1, rams in mapping.items() if cm1 in ds.data_vars}
+#     if not applicable:
+#         return ds
+#     return ds.rename(applicable)

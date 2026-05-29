@@ -33,7 +33,6 @@ from .io import (
     infer_rams_dimensions,
     read_cm1_output,
     read_rams_output,
-    rename_cm1_to_rams_vars,
     to_header_filepath,
     to_rams_output_filename,
 )
@@ -45,7 +44,9 @@ from .execution import (
     run_rams,
     build_rams_directory_structure,
     setup_history_restart,
-    stdout_path_for,
+    stdout_dir_for,
+    render_rams_submit,
+    write_rams_submit_script,
 )
 
 # --- CM1 ---------------------------------------------------------------------
@@ -101,7 +102,6 @@ __all__ = [
     "infer_rams_dimensions",
     "read_cm1_output",
     "read_rams_output",
-    "rename_cm1_to_rams_vars",
     "to_header_filepath",
     "to_rams_output_filename",
     # Execution
@@ -109,7 +109,9 @@ __all__ = [
     "ramsin_str",
     "run_rams",
     "setup_history_restart",
-    "stdout_path_for",
+    "stdout_dir_for",
+    "render_rams_submit",
+    "write_rams_submit_script",
     # Calculations
     "calculate_bsr_variables",
     "calculate_derived_variables",
