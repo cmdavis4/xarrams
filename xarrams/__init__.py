@@ -62,7 +62,7 @@ from .calculations import (
 # --- Soundings ---------------------------------------------------------------
 from .soundings import (
     format_sounding_field_ramsin_str,
-    plot_sounding,
+    plot_sounding_skewt,
     with_updated_sounding_fields,
     wk84_sounding,
     write_rams_formatted_sounding,
@@ -112,7 +112,7 @@ __all__ = [
     "calculate_thermodynamic_variables",
     # Soundings
     "format_sounding_field_ramsin_str",
-    "plot_sounding",
+    "plot_sounding_skewt",
     "with_updated_sounding_fields",
     "wk84_sounding",
     "write_rams_formatted_sounding",

@@ -135,6 +135,34 @@ def parse_rams_stdout_walltimes(
     return sim_times, walltimes
 
 
+def _check_rams_run_status(run_dir):
+    # All runs should have stderr, so check that
+    stderr = run_dir / "stdout" / "current.stderr"
+    if not stderr.exists():
+        # This run hasn't been run yet
+        return None
+    with stderr.open("r") as f:
+        # Read the first line
+        contents = f.readline().strip()
+        if contents:
+            # If there's anything in stderr, there was a problem
+            return contents
+    # Check for history restarts
+    hr_dir = run_dir / "history_restarts"
+    if hr_dir.exists():
+        for this_hr_dir in hr_dir.iterdir():
+            if this_hr_dir.is_dir():
+                hr_stderr = this_hr_dir / "stdout" / "current.stderr"
+                if not hr_stderr.exists():
+                    # Hasn't been run yet
+                    continue
+                with hr_stderr.open("r") as f:
+                    contents = f.readline().strip()
+                    if contents:
+                        return f"{contents} in {this_hr_dir.relative_to(run_dir)}"
+    return "ok"
+
+
 def check_rams_run_statuses(parent_dir):
 
     parent_dir = Path(parent_dir)
@@ -143,13 +171,6 @@ def check_rams_run_statuses(parent_dir):
 
     for run_dir in parent_dir.iterdir():
         if run_dir.is_dir():
-            stderr = run_dir / "stdout" / "current.stderr"
-            if stderr.exists():
-                with stderr.open("r") as f:
-                    status = f.readline().strip()
-                    # If there's nothing in the file, then the status is ok
-                    if not status:
-                        status = "ok"
-                    statuses[run_dir.name] = status
+            statuses[run_dir.name] = _check_rams_run_status(run_dir)
 
     return dict(sorted(statuses.items()))

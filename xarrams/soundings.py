@@ -16,11 +16,13 @@ import numpy as np
 import pandas as pd
 from pint import Quantity
 import xarray as xr
+from tqdm.notebook import tqdm
 
 from carlee_tools.types_carlee_tools import PathLike
-from carlee_tools.plotting import clean_legend
+from carlee_tools.plotting import clean_legend, get_nth_color
 
 from .constants import SOUNDING_NAMELIST_VARIABLES, C_p, R_d, p0, reps
+from .calculations import calculate_thermodynamic_variables
 
 
 def format_sounding_field_ramsin_str(
@@ -125,7 +127,7 @@ def write_rams_formatted_sounding(
         )
 
 
-def plot_sounding(
+def plot_sounding_skewt(
     column_df: pd.DataFrame,
     barbs: bool = True,
     skew=None,
@@ -222,7 +224,39 @@ def plot_sounding(
     return fig
 
 
+# Temporary alias for backwards compatibility
+plot_sounding = plot_sounding_skewt
+
+
+def to_sounding_df(ds):
+    # Reject datasets with multiple times
+    ds = ds.copy().squeeze()
+    if ("time" in ds.dims) or ("time" in ds.coords):
+        if ds["time"].size > 1:
+            raise ValueError(
+                "ds cannot have a time dimension with more than one value, to avoid"
+                " confusion"
+            )
+    # If it has x and y, take the mean over them
+    mean_vars = [x for x in ds.dims if x in ["x", "y"]]
+    if mean_vars:
+        ds = ds.mean(mean_vars)
+    # Create a clean copy, calculate state variables we'll need, drop fictitious z
+    # levels
+    ds = calculate_thermodynamic_variables(ds)
+    ds = ds.sel(z=ds["z"].values[ds["z"].values > 0])
+    return pd.DataFrame({
+        "z": ds["z"],
+        "PS": ds["P"],
+        "TS": (ds["T"].values * units("K")).to("degC").magnitude,
+        "RTS": ds["RH"] * 100.0,  # frac → percent
+        "US": ds["UC"],
+        "VS": ds["VC"],
+    })
+
+
 def calculate_sounding_derived_vars(df):
+    df = df.copy()
     df["dewpoint"] = mpc.dewpoint_from_relative_humidity(
         temperature=df["TS"].values * units("degC"),
         relative_humidity=df["RTS"].values * units("percent"),
@@ -246,6 +280,26 @@ def calculate_sounding_derived_vars(df):
         temperature=df["TS"].values * units("degC"),
         dewpoint=df["dewpoint"].values * units("degC"),
     ).to("K")
+    df["lapse_rate"] = (df["TS"].diff() / df["z"].diff()) * 1000
+    df["theta_lapse_rate"] = (df["theta"].diff() / df["z"].diff()) * 1000
+
+    # Precalculate the relevant variables as unitful arrays
+    Ps = df["PS"].values * units("hPa")
+    Ts = df["TS"].values * units("degC")
+    DPs = df["dewpoint"].values * units("degC")
+    capes = np.zeros(len(df)) * units("J/kg")
+    cins = np.zeros(len(df)) * units("J/kg")
+    for ix in tqdm(list(range(len(df)))):
+        profile = mpc.parcel_profile(
+            pressure=Ps,
+            temperature=Ts[ix],
+            dewpoint=DPs[ix],
+        )
+        capes[ix], cins[ix] = mpc.cape_cin(
+            pressure=Ps, temperature=Ts, dewpoint=DPs, parcel_profile=profile
+        )
+    df["cape"] = capes
+    df["cin"] = cins
     return df
 
 
@@ -292,8 +346,6 @@ def wk84_sounding(
     z_increment: Quantity = 10 * units("m"),
     theta_fn: callable = _WK_DEFAULT_THETA_CALCULATION,
     rh_fn: callable = _WK_DEFAULT_RH_CALCULATION,
-    diagnostics: bool = True,
-    plot: bool = False,
 ) -> pd.DataFrame:
     """Generate an idealized Weisman & Klemp (1984) atmospheric sounding.
 
@@ -469,61 +521,65 @@ def wk84_sounding(
             "US": wk_U,
             "VS": wk_V,
         })
-    if diagnostics:
-        # Calculate more thermodynamic quantities
-        df["dewpoint"] = (
-            mpc.dewpoint_from_relative_humidity(
-                temperature=df["TS"].values * units("degC"),
-                relative_humidity=df["RTS"].values * units("percent"),
-            )
-            .to("degC")
-            .magnitude
-        )
-        df["theta"] = (
-            mpc.potential_temperature(
-                pressure=df["PS"].values * units("hPa"),
-                temperature=df["TS"].values * units("degC"),
-            )
-            .to("K")
-            .magnitude
-        )
-        df["qv"] = (
-            mpc.mixing_ratio_from_relative_humidity(
-                pressure=df["PS"].values * units("hPa"),
-                temperature=df["TS"].values * units("degC"),
-                relative_humidity=df["RTS"].values * units("percent"),
-            )
-            .to("kg/kg")
-            .magnitude
-        )
-        df["theta_v"] = (
-            mpc.virtual_potential_temperature(
-                pressure=df["PS"].values * units("hPa"),
-                temperature=df["TS"].values * units("degC"),
-                mixing_ratio=df["qv"].values,
-            )
-            .to("K")
-            .magnitude
-        )
-
-    if plot:
-        if diagnostics:
-            fig, axs = plt.subplots(
-                ncols=2, nrows=2, figsize=(6, 6), layout="constrained"
-            )
-            plot_sounding(df, ax=axs[0, 0])
-            ax = axs[0, 1]
-            for var in ["theta", "theta_v"]:
-                ax.plot(df[var].values, df["z"], label=var)
-            ax.set_ylabel("z (m)")
-            ax.set_xlabel("K")
-            clean_legend(ax)
-            ax = axs[1, 1]
-            ax.plot(df["qv"] * 1000, df["z"])
-            ax.set_ylabel("z (m)")
-            ax.set_title("Mixing ratio")
-            ax.set_xlabel(r"$q_v$ (g/kg)")
-        else:
-            plot_sounding(df)
 
     return df
+
+
+def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000):
+    # Skew-T
+    fig, axs = plt.subplots(ncols=2, nrows=2, figsize=(6, 6), layout="constrained")
+    ax = axs[0, 0]
+    skewt = plot_sounding_skewt(sounding_df, ax=ax)
+    # skewt.ax.set_title("Skew-T")
+
+    if ll_z_cutoff:
+        ll_df = sounding_df.loc[sounding_df["z"] <= ll_z_cutoff]
+    else:
+        ll_df = sounding_df
+
+    # Potential temperatures
+    ax = axs[0, 1]
+    for var in ["theta", "theta_v"]:
+        ax.plot(ll_df[var].values, ll_df["z"], label=var)
+    ax.set_ylabel("z (m)")
+    ax.set_xlabel("K")
+    clean_legend(ax, frameon=False)
+    # Also lapse rate
+    lr_ax = ax.twiny()
+    lr_ax.plot(
+        ll_df["theta_lapse_rate"].values,
+        ll_df["z"],
+        linestyle="dashed",
+        color="grey",
+    )
+    lr_ax.set_ylabel("z (m)")
+    lr_ax.set_xlabel(r"$\Delta$K/km")
+
+    # CAPE/CIN
+    ax = axs[1, 0]
+    for var in ["cape", "cin"]:
+        ax.plot(ll_df[var].values, ll_df["z"], label=var)
+    ax.set_ylabel("z (m)")
+    ax.set_xlabel("J/kg")
+    ax.set_title("CAPE/CIN")
+    clean_legend(ax, frameon=False)
+
+    # Moisture
+    ax = axs[1, 1]
+    ax.set_title("Moisture")
+    ax.plot(ll_df["q_v"], ll_df["z"], color=get_nth_color(0), label=r"$q_v$")
+    ax.set_ylabel("z (m)")
+    ax.set_xlabel(r"$q_v$ (g/kg)")
+    # Also RH
+    rh_ax = ax.twiny()
+    rh_ax.plot(ll_df["RTS"], ll_df["z"], color=get_nth_color(1), label="RH")
+    rh_ax.set_ylabel("z (m)")
+    rh_ax.set_xlabel("RH (%)")
+
+    return fig
+
+
+def is_skewt(ax):
+    from metpy.plots import skewt
+
+    return isinstance(ax, skewt.SkewXAxes)
