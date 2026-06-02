@@ -66,6 +66,10 @@ DEFAULT_BSR_VARIABLES: list[str] = [
 SOUNDING_NAMELIST_VARIABLES: list[str] = ["PS", "TS", "RTS", "US", "VS"]
 """Variables that make up an initial sounding in a RAMSIN namelist."""
 
+CM1_TO_RAMS_DIM_MAPPINGS = {"zh": "z", "yh": "y", "xh": "x"}
+
+# This list includes both base RAMS variables and variables as I have named them in the
+# derived variable calculations in calculations.py
 CM1_TO_RAMS_VARIABLE_NAMES: dict[str, str] = {
     # Winds: RAMS UC/VC/WC live on the scalar grid, matching CM1's "*interp"
     # variants. The native staggered u/v/w have no clean RAMS counterpart.
@@ -87,7 +91,10 @@ CM1_TO_RAMS_VARIABLE_NAMES: dict[str, str] = {
     "ncr": "CRP",
     "ncs": "CSP",
     "ncg": "CGP",
-    "tke": "TKEP",
+    "prs": "P",
+    "pi": "PI",
+    "rho": "DN0",
+    "rain": "ACCPR",
     "prate": "PCPRR",
 }
 """Default mapping from CM1 variable names to their RAMS counterparts. Only
@@ -135,4 +142,3 @@ C_p = 1004.0 * units("J/kg/K")  # J/(kg·K)
 R_d = 287.0 * units("J/kg/K")  # J/(kg·K)
 p0 = 1000.0 * units("hPa")  # hPa
 reps = 461.5 / 287.0  # = R_v / R_d, ≈ 1.608
-

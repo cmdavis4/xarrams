@@ -9,12 +9,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pandas as pd
+import numpy as np
+
 from carlee_tools.types_carlee_tools import PathLike
+
+from .constants import CM1_TO_RAMS_DIM_MAPPINGS, CM1_TO_RAMS_VARIABLE_NAMES
+from .io import CM1_DEFAULT_START_DATETIME
 
 
 def generate_cm1_namelist(
-    namelist_name: str,
-    cm1_run_dir: PathLike,
+    output_dir: PathLike,
     namelist_template_path: PathLike,
     parameters: dict[str, str],
 ) -> Path:
@@ -46,7 +51,7 @@ def generate_cm1_namelist(
     Raises:
         ValueError: If a parameter name is not found in the template.
     """
-    cm1_run_dir = Path(cm1_run_dir)
+    output_dir = Path(output_dir)
     namelist_template_path = Path(namelist_template_path)
 
     namelist = namelist_template_path.read_text()
@@ -67,6 +72,44 @@ def generate_cm1_namelist(
                 f"Field {parameter_name} not found in template namelist.input"
             )
 
-    namelist_path = cm1_run_dir / "output" / "namelist.input"
-    namelist_path.write_text(namelist)
-    return namelist_path
+    output_dir = output_dir / "namelist.input"
+    output_dir.write_text(namelist)
+    return output_dir
+
+
+def _calculate_ramslike_derived_variables(cm1_ds):
+    cm1_ds = cm1_ds.copy()
+    cm1_ds["RTP"] = (
+        cm1_ds["RV"]
+        + cm1_ds["RCP"]
+        + cm1_ds["RRP"]
+        + cm1_ds["RPP"]
+        + cm1_ds["RSP"]
+        + cm1_ds["RGP"]
+    )
+    return cm1_ds
+
+
+def coerce_to_ramslike(
+    cm1_ds, start_datetime=CM1_DEFAULT_START_DATETIME, time_dim_name="time"
+):
+    # First limit to the variables we can map directly, and that are present
+    present_coercables = [
+        x for x in CM1_TO_RAMS_VARIABLE_NAMES.keys() if x in cm1_ds.data_vars
+    ]
+    cm1_ds = cm1_ds[present_coercables]
+    # Rename dimensions
+    cm1_ds = cm1_ds.rename(CM1_TO_RAMS_DIM_MAPPINGS)
+    # Rename data variables
+    cm1_ds = cm1_ds.rename(
+        {k: v for k, v in CM1_TO_RAMS_VARIABLE_NAMES.items() if k in present_coercables}
+    )
+    # Calculate other base RAMS variables that we can get directly from these
+    cm1_ds = _calculate_ramslike_derived_variables(cm1_ds)
+    # Fix the time coordinate
+    start_ts = pd.Timestamp(start_datetime)
+    seconds = np.asarray(cm1_ds[time_dim_name].values, dtype="float64")
+    absolute_times = start_ts + pd.to_timedelta(seconds, unit="s")
+    cm1_ds = cm1_ds.assign_coords({time_dim_name: absolute_times})
+
+    return cm1_ds

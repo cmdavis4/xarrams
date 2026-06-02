@@ -81,7 +81,7 @@ def with_updated_sounding_fields(
         )
         this_param_set.update({
             "IPSFLG": "0",
-            "ITSFLG": "1",
+            "ITSFLG": "0",
             "IRTSFLG": "3",
             "IUSFLG": "0",
         })

@@ -10,6 +10,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 
+from .constants import RAMS_FILENAME_DT_STRFTIME_FORMAT
+
+from carlee_tools import dt_to_str
 from carlee_tools.types_carlee_tools import PathLike
 
 
@@ -174,3 +177,29 @@ def check_rams_run_statuses(parent_dir):
             statuses[run_dir.name] = _check_rams_run_status(run_dir)
 
     return dict(sorted(statuses.items()))
+
+
+def dt_to_rams_output_str(dt_like):
+    if isinstance(dt_like, str):
+        return dt_like
+    return dt_to_str(dt_like=dt_like, date_format=RAMS_FILENAME_DT_STRFTIME_FORMAT)
+
+
+def data_to_head_filename(data_fname_or_path):
+    if not isinstance(data_fname_or_path, str):
+        data_fname_or_path = data_fname_or_path.name
+    return data_fname_or_path[:-6] + "-head.txt"
+
+
+def head_to_data_filename(head_fname_or_path, grid=1):
+    if not isinstance(head_fname_or_path, str):
+        head_fname_or_path = head_fname_or_path.name
+    return head_fname_or_path[:-9] + f"g{grid}.h5"
+
+
+def dt_to_rams_output_filenames(dt_like, lite=False, grid=1):
+    fname_base = f"a-{'L' if lite else 'A'}-{dt_to_rams_output_str(dt_like)}"
+    print(fname_base)
+    data_fname = f"{fname_base}-g{grid}.h5"
+    print(data_fname)
+    return data_fname, data_to_head_filename(data_fname)
