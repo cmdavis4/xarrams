@@ -25,6 +25,10 @@ _RAMS_SUBMIT_TEMPLATE_PATH = (
     Path(__file__).parent / "templates" / "template_slurm_rams_submission.sh"
 )
 
+_CM1_SUBMIT_TEMPLATE_PATH = (
+    Path(__file__).parent / "templates" / "template_slurm_cm1_submission.sh"
+)
+
 # ---------------------------------------------------------------------------
 # Command templates
 # ---------------------------------------------------------------------------
@@ -519,6 +523,59 @@ def render_rams_submit(
     )
 
 
+def render_cm1_submit(
+    *,
+    run_name: str,
+    n_nodes: int,
+    n_cores: int,
+    wall_time: str,
+    cm1_dir: PathLike,
+    run_dir: PathLike,
+    stdout_dir: PathLike,
+    queue: str,
+    account: str,
+    modules: Sequence[str],
+    mpi_launcher: str,
+    prologue: Optional[str] = None,
+    template_path: PathLike = _CM1_SUBMIT_TEMPLATE_PATH,
+) -> str:
+    """Render a SLURM submission script for a CM1 run.
+
+    Pure rendering: all machine-specific values must be supplied by the
+    caller. Wrappers (e.g. ``ps.templates.render_cm1_submit``) can
+    resolve them from a local machine config and forward here.
+
+    Unlike :func:`render_rams_submit`, CM1 takes no configuration path on
+    its command line — the executable reads ``namelist.input`` from its
+    working directory. The rendered script copies ``{cm1_dir}/run/cm1.exe``
+    into ``{run_dir}/output`` (where ``namelist.input`` is assumed to live),
+    runs there, and stamps stdout/stderr and the namelist into ``stdout_dir``.
+
+    Returns the rendered script text; the caller is responsible for
+    writing it.
+    """
+    env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(Path(template_path).parent),
+        keep_trailing_newline=True,
+        undefined=jinja2.StrictUndefined,
+    )
+    tmpl = env.get_template(Path(template_path).name)
+    return tmpl.render(
+        account=account,
+        modules=list(modules),
+        mpi_launcher=mpi_launcher,
+        prologue=prologue,
+        queue=queue,
+        run_name=run_name,
+        n_nodes=n_nodes,
+        n_cores=n_cores,
+        wall_time=wall_time,
+        cm1_dir=str(cm1_dir),
+        run_dir=str(run_dir),
+        stdout_dir=str(stdout_dir),
+    )
+
+
 def write_rams_submit_script(
     run_dir: PathLike,
     ramsin_name: str,
@@ -670,6 +727,8 @@ def setup_history_restart(
             else:
                 shutil.copy2(str(hfilin_data_path.resolve()), str(seed_dir.resolve()))
                 shutil.copy2(str(hfilin.resolve()), str(seed_dir.resolve()))
+                # Set the hfilin to start from these
+                hfilin = (seed_dir / hfilin.name).resolve()
 
     # Generate the file structure and ramsin
     # Don't create input or output directories to avoid confusion, since we're using
@@ -684,13 +743,14 @@ def setup_history_restart(
         "RUNTYPE": ramsin_str("HISTORY"),
         "HFILIN": ramsin_str(hfilin.resolve()),
     }
-    for name in ("IAEROHIST", "ITRACHIST"):
-        if name not in ramsin_parameters:
-            print(
-                f"Setting {name}=0 by default for the history restart;"
-                f" pass ramsin_parameters={{'{name}': ...}} to override."
-            )
-            ramsin_parameters[name] = "0"
+    vars_to_reset = ["IAEROHIST", "ITRACHIST", "IBUBBLE"]
+    reset_not_passed = [x for x in vars_to_reset if x not in ramsin_parameters]
+    print(
+        f"Setting {reset_not_passed}=0 for the history"
+        " restart; pass values in ramsin_parameters to override."
+    )
+    for name in reset_not_passed:
+        ramsin_parameters[name] = "0"
     ramsin_path = generate_ramsin(
         ramsin_name=hr_name,
         rams_run_dir=hr_dir,

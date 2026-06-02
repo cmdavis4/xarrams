@@ -300,6 +300,19 @@ def calculate_sounding_derived_vars(df):
         )
     df["cape"] = capes
     df["cin"] = cins
+    # LCL can accept arrays of values, so we can similarly calculate the LCL
+    # at every starting height, but with a single call
+    lcl_ps, _ = mpc.lcl(pressure=Ps, temperature=Ts, dewpoint=DPs)
+    # Interpolate the LCL pressure back onto the column's pressure–height
+    # relationship to get the LCL height. np.interp needs the sample points
+    # (pressures) increasing, but PS decreases monotonically with height, so
+    # reverse both arrays.
+    df["lcl"] = np.interp(
+        lcl_ps.to("hPa").magnitude,
+        df["PS"].values[::-1],
+        df["z"].values[::-1],
+    )
+
     return df
 
 
@@ -575,6 +588,15 @@ def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000):
     rh_ax.plot(ll_df["RTS"], ll_df["z"], color=get_nth_color(1), label="RH")
     rh_ax.set_ylabel("z (m)")
     rh_ax.set_xlabel("RH (%)")
+
+    # Add surface parcel lcl to this the non-skewt figures
+    for ax in axs.flatten()[1:]:
+        ax.axhline(
+            sounding_df.iloc[0]["lcl"],
+            linestyle="dotted",
+            color="skyblue",
+            alpha=0.6,
+        )
 
     return fig
 

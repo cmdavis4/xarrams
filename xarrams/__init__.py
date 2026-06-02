@@ -46,6 +46,7 @@ from .execution import (
     setup_history_restart,
     stdout_dir_for,
     render_rams_submit,
+    render_cm1_submit,
     write_rams_submit_script,
 )
 
@@ -111,6 +112,7 @@ __all__ = [
     "setup_history_restart",
     "stdout_dir_for",
     "render_rams_submit",
+    "render_cm1_submit",
     "write_rams_submit_script",
     # Calculations
     "calculate_bsr_variables",
