@@ -206,7 +206,7 @@ def plot_sounding_skewt(
             v=coarsened["VS"] * units("m/s"),
         )
     else:
-        ax_hod = inset_axes(skewt.ax, "40%", "40%", loc=1)
+        ax_hod = inset_axes(skewt.ax, "25%", "25%", loc=1)
         component_range = max(column_df["US"].max(), column_df["VS"].max()) + 1
         h = Hodograph(ax_hod, component_range=component_range)
         h.add_grid(increment=10)
@@ -217,9 +217,13 @@ def plot_sounding_skewt(
     z_at_ticks = np.interp(p_ticks, column_df["PS"][::-1], column_df["z"][::-1])
     new_labels = []
     for p, z in zip(p_ticks, z_at_ticks):
-        height_str = f"{z / 1000:.1f} km" if z >= 1000 else f"{int(z)} m"
-        new_labels.append(f"{height_str}, {int(p)} hPa")
-    skewt.ax.set_yticklabels(new_labels)
+        height_str = f"{z / 1000:.1f}km" if z >= 1000 else f"{int(z)}m"
+        new_labels.append(f"{int(p)} hPa · {height_str}")
+    skewt.ax.set_yticklabels(new_labels, fontsize=8)
+    skewt.ax.tick_params(axis="x", labelsize=8)
+    skewt.ax.xaxis.set_major_locator(plt.MultipleLocator(10))
+    skewt.ax.xaxis.set_minor_locator(plt.MultipleLocator(5))
+    skewt.ax.grid(which="minor", axis="x", alpha=0.3)
 
     return fig
 
@@ -291,12 +295,15 @@ def calculate_sounding_derived_vars(df):
     cins = np.zeros(len(df)) * units("J/kg")
     for ix in tqdm(list(range(len(df)))):
         profile = mpc.parcel_profile(
-            pressure=Ps,
+            pressure=Ps[ix:],
             temperature=Ts[ix],
             dewpoint=DPs[ix],
         )
         capes[ix], cins[ix] = mpc.cape_cin(
-            pressure=Ps, temperature=Ts, dewpoint=DPs, parcel_profile=profile
+            pressure=Ps[ix:],
+            temperature=Ts[ix:],
+            dewpoint=DPs[ix:],
+            parcel_profile=profile,
         )
     df["cape"] = capes
     df["cin"] = cins
@@ -542,7 +549,7 @@ def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000):
     # Skew-T
     fig, axs = plt.subplots(ncols=2, nrows=2, figsize=(6, 6), layout="constrained")
     ax = axs[0, 0]
-    skewt = plot_sounding_skewt(sounding_df, ax=ax)
+    skewt = plot_sounding_skewt(sounding_df, ax=ax, barbs=False)
     # skewt.ax.set_title("Skew-T")
 
     if ll_z_cutoff:
@@ -552,21 +559,26 @@ def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000):
 
     # Potential temperatures
     ax = axs[0, 1]
-    for var in ["theta", "theta_v"]:
-        ax.plot(ll_df[var].values, ll_df["z"], label=var)
+    theta_labels = {"theta": r"$\theta$", "theta_v": r"$\theta_v$"}
+    for var, label in theta_labels.items():
+        ax.plot(ll_df[var].values, ll_df["z"], label=label)
     ax.set_ylabel("z (m)")
     ax.set_xlabel("K")
-    clean_legend(ax, frameon=False)
     # Also lapse rate
     lr_ax = ax.twiny()
-    lr_ax.plot(
+    (lr_line,) = lr_ax.plot(
         ll_df["theta_lapse_rate"].values,
         ll_df["z"],
         linestyle="dashed",
         color="grey",
+        label="lapse rate",
     )
-    lr_ax.set_ylabel("z (m)")
-    lr_ax.set_xlabel(r"$\Delta$K/km")
+    lr_ax.set_xlabel(r"$\Delta$K/km", color="grey")
+    lr_ax.tick_params(axis="x", colors="grey")
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(
+        handles=handles + [lr_line], labels=labels + ["lapse rate"], frameon=False
+    )
 
     # CAPE/CIN
     ax = axs[1, 0]
@@ -580,23 +592,30 @@ def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000):
     # Moisture
     ax = axs[1, 1]
     ax.set_title("Moisture")
-    ax.plot(ll_df["q_v"], ll_df["z"], color=get_nth_color(0), label=r"$q_v$")
+    qv_color, rh_color = get_nth_color(0), get_nth_color(1)
+    (qv_line,) = ax.plot(ll_df["q_v"], ll_df["z"], color=qv_color, label=r"$q_v$")
     ax.set_ylabel("z (m)")
-    ax.set_xlabel(r"$q_v$ (g/kg)")
-    # Also RH
+    ax.set_xlabel(r"$q_v$ (g/kg)", color=qv_color)
+    ax.tick_params(axis="x", colors=qv_color)
     rh_ax = ax.twiny()
-    rh_ax.plot(ll_df["RTS"], ll_df["z"], color=get_nth_color(1), label="RH")
-    rh_ax.set_ylabel("z (m)")
-    rh_ax.set_xlabel("RH (%)")
+    rh_ax.plot(ll_df["RTS"], ll_df["z"], color=rh_color, label="RH")
+    rh_ax.set_xlabel("RH (%)", color=rh_color)
+    rh_ax.tick_params(axis="x", colors=rh_color)
 
-    # Add surface parcel lcl to this the non-skewt figures
+    for non_skewt_ax in [axs[0, 1], lr_ax, axs[1, 0], axs[1, 1], rh_ax]:
+        non_skewt_ax.minorticks_on()
+        non_skewt_ax.grid(which="major", alpha=0.4)
+        non_skewt_ax.grid(which="minor", alpha=0.15)
+
+    # Add surface parcel LCL to all panels (pressure on skew-T, height on others)
+    z_lcl = sounding_df.iloc[0]["lcl"]
+    p_lcl = np.interp(z_lcl, sounding_df["z"].values, sounding_df["PS"].values)
+    for ax in skewt.axes:
+        if is_skewt(ax):
+            ax.axhline(p_lcl, linestyle="dotted", color="skyblue", alpha=0.6)
+
     for ax in axs.flatten()[1:]:
-        ax.axhline(
-            sounding_df.iloc[0]["lcl"],
-            linestyle="dotted",
-            color="skyblue",
-            alpha=0.6,
-        )
+        ax.axhline(z_lcl, linestyle="dotted", color="skyblue", alpha=0.6)
 
     return fig
 
