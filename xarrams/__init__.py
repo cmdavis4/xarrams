@@ -61,6 +61,8 @@ from .calculations import (
     calculate_bsr_variables,
     calculate_derived_variables,
     calculate_thermodynamic_variables,
+    plot_sounding_diagnostics,
+    plot_base_state_diagnostics,
 )
 
 # --- Soundings ---------------------------------------------------------------
@@ -70,6 +72,8 @@ from .soundings import (
     with_updated_sounding_fields,
     wk84_sounding,
     write_rams_formatted_sounding,
+    to_sounding_df,
+    calculate_sounding_derived_vars,
 )
 
 # --- Utilities ---------------------------------------------------------------

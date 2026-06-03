@@ -545,9 +545,13 @@ def wk84_sounding(
     return df
 
 
-def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000):
+def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000, axs=None):
     # Skew-T
-    fig, axs = plt.subplots(ncols=2, nrows=2, figsize=(6, 6), layout="constrained")
+    if axs is None:
+        fig, axs = plt.subplots(ncols=2, nrows=2, figsize=(6, 6), layout="constrained")
+    else:
+        axs = np.asarray(axs).reshape(2, 2)
+        fig = axs[0, 0].figure
     ax = axs[0, 0]
     skewt = plot_sounding_skewt(sounding_df, ax=ax, barbs=False)
     # skewt.ax.set_title("Skew-T")
