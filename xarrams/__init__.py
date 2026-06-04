@@ -61,8 +61,6 @@ from .calculations import (
     calculate_bsr_variables,
     calculate_derived_variables,
     calculate_thermodynamic_variables,
-    plot_sounding_diagnostics,
-    plot_base_state_diagnostics,
 )
 
 # --- Soundings ---------------------------------------------------------------
@@ -74,6 +72,8 @@ from .soundings import (
     write_rams_formatted_sounding,
     to_sounding_df,
     calculate_sounding_derived_vars,
+    plot_sounding_diagnostics,
+    plot_base_state_diagnostics,
 )
 
 # --- Utilities ---------------------------------------------------------------
@@ -118,6 +118,7 @@ __all__ = [
     "render_rams_submit",
     "render_cm1_submit",
     "write_rams_submit_script",
+    "build_rams_directory_structure",
     # Calculations
     "calculate_bsr_variables",
     "calculate_derived_variables",
@@ -128,6 +129,10 @@ __all__ = [
     "with_updated_sounding_fields",
     "wk84_sounding",
     "write_rams_formatted_sounding",
+    "to_sounding_df",
+    "calculate_sounding_derived_vars",
+    "plot_sounding_diagnostics",
+    "plot_base_state_diagnostics",
     # Utilities
     "get_z_levels",
     "parse_rams_stdout_walltimes",

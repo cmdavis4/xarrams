@@ -628,3 +628,32 @@ def is_skewt(ax):
     from metpy.plots import skewt
 
     return isinstance(ax, skewt.SkewXAxes)
+
+def plot_base_state_diagnostics(bs_ds):
+    if "time" in bs_ds.dims:
+        bs_ds = bs_ds.isel(time=0)
+    bs_df = to_sounding_df(bs_ds)
+    bs_df = calculate_sounding_derived_vars(bs_df)
+    lcl = bs_df.iloc[0]["lcl"]
+
+    fig, axs = plt.subplots(ncols=2, nrows=3, figsize=(7, 10), layout="constrained")
+    xrr.soundings.plot_sounding_diagnostics(bs_df, axs=axs[:2, :])
+
+    ccn_ax = axs[2, 0]
+    ccn_ax.plot(
+        bs_ds["CN1NP"].mean(["x", "y"]).values / 1e6, bs_ds["z"].values, label="CCN1"
+    )
+    ccn_ax.plot(
+        bs_ds["CN2NP"].mean(["x", "y"]).values / 1e6, bs_ds["z"].values, label="CCN2"
+    )
+    clean_legend(ccn_ax, frameon=False)
+    ccn_ax.set_title("CCN number concentration")
+    ccn_ax.set_xlabel("#/mg")
+    ccn_ax.set_ylabel("z (m)")
+
+    axs[2, 1].set_axis_off()
+
+    for ax in axs.flatten()[:-1]:
+        ax.axhline(lcl, linestyle="dotted", color="skyblue", alpha=0.6)
+
+    return fig
