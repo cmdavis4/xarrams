@@ -629,6 +629,7 @@ def is_skewt(ax):
 
     return isinstance(ax, skewt.SkewXAxes)
 
+
 def plot_base_state_diagnostics(bs_ds):
     if "time" in bs_ds.dims:
         bs_ds = bs_ds.isel(time=0)
@@ -637,7 +638,7 @@ def plot_base_state_diagnostics(bs_ds):
     lcl = bs_df.iloc[0]["lcl"]
 
     fig, axs = plt.subplots(ncols=2, nrows=3, figsize=(7, 10), layout="constrained")
-    xrr.soundings.plot_sounding_diagnostics(bs_df, axs=axs[:2, :])
+    plot_sounding_diagnostics(bs_df, axs=axs[:2, :])
 
     ccn_ax = axs[2, 0]
     ccn_ax.plot(
