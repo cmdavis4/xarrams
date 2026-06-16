@@ -17,8 +17,13 @@ module load {{m}}
 {%- if prologue %}
 {{prologue}}
 {% endif %}
+{% if copy_executable -%}
 # Copy the CM1 executable into our output directory; assume namelist is already there
 cp -f {{cm1_dir}}/run/cm1.exe {{run_dir}}/output
+{%- else -%}
+# Reusing the cm1.exe already in the output directory (e.g. a history restart),
+# so the whole run uses one binary; the checksum below records which one.
+{%- endif %}
 cd {{run_dir}}/output
 
 # Get current datetime for output files

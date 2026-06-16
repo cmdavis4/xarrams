@@ -19,6 +19,7 @@ from pandas import Timestamp, Timedelta
 
 from carlee_tools.types_carlee_tools import PathLike
 
+from .cm1 import generate_cm1_namelist
 from .utils import dt_to_rams_output_filenames, head_to_data_filename
 
 _RAMS_SUBMIT_TEMPLATE_PATH = (
@@ -334,6 +335,30 @@ def _require_ramsin_field(ramsin_text: str, name: str) -> str:
     return value
 
 
+def _parse_namelist_field(namelist_text: str, name: str) -> Optional[str]:
+    """Return the raw value of CM1 namelist field *name* (sans quotes), or ``None``.
+
+    Matches a line of the form ``<name> = <value>[,] [! comment]`` (the same
+    shape :func:`~xarrams.cm1.generate_cm1_namelist` writes), stripping the
+    trailing comma/comment and any surrounding quotes.
+    """
+    match = re.search(
+        rf"^\s*{re.escape(name)}\s*=\s*([^!,\n]*)",
+        namelist_text,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        return None
+    return match.group(1).strip().strip("'\"")
+
+
+def _require_namelist_field(namelist_text: str, name: str) -> str:
+    value = _parse_namelist_field(namelist_text, name)
+    if value is None:
+        raise ValueError(f"CM1 namelist field {name} not found")
+    return value
+
+
 def _initial_run_end_datetime(ramsin_text: str) -> _dt.datetime:
     """Compute the end datetime of a run from its RAMSIN's start + TIMMAX."""
     iyear = int(_require_ramsin_field(ramsin_text, "IYEAR1"))
@@ -537,6 +562,7 @@ def render_cm1_submit(
     modules: Sequence[str],
     mpi_launcher: str,
     prologue: Optional[str] = None,
+    copy_executable: bool = True,
     template_path: PathLike = _CM1_SUBMIT_TEMPLATE_PATH,
 ) -> str:
     """Render a SLURM submission script for a CM1 run.
@@ -550,6 +576,12 @@ def render_cm1_submit(
     working directory. The rendered script copies ``{cm1_dir}/run/cm1.exe``
     into ``{run_dir}/output`` (where ``namelist.input`` is assumed to live),
     runs there, and stamps stdout/stderr and the namelist into ``stdout_dir``.
+
+    Set *copy_executable* to ``False`` to skip the copy and reuse the
+    ``cm1.exe`` already present in ``{run_dir}/output`` — e.g. for a history
+    restart, so the whole run uses a single binary even if ``{cm1_dir}`` was
+    rebuilt in the meantime. The provenance checksum still records which
+    binary actually ran.
 
     Returns the rendered script text; the caller is responsible for
     writing it.
@@ -573,6 +605,7 @@ def render_cm1_submit(
         cm1_dir=str(cm1_dir),
         run_dir=str(run_dir),
         stdout_dir=str(stdout_dir),
+        copy_executable=copy_executable,
     )
 
 
@@ -769,6 +802,195 @@ def setup_history_restart(
             ramsin_path=ramsin_path,
             stdout_dir=hr_dir / "stdout",
             **render_kwargs,
+        )
+    )
+    return submit_script_path
+
+
+# ---------------------------------------------------------------------------
+# CM1 history restarts
+# ---------------------------------------------------------------------------
+
+
+def _cm1_rstnum_from_filename(
+    name: str, restart_format: int, restart_filetype: int
+) -> Optional[int]:
+    """Extract the restart number (``nrst``) from a ``cm1rst_*`` filename.
+
+    Returns ``None`` for filenames that carry no number (``restart_filetype=1``)
+    or that don't match the expected pattern for the given format/filetype.
+    See ``restart_write.F`` for the authoritative naming.
+    """
+    if restart_format == 2:  # netcdf
+        match = re.fullmatch(r"cm1rst_(\d{6})\.nc", name)
+        return int(match.group(1)) if match else None
+    # restart_format == 1 (binary)
+    if restart_filetype == 2:  # cm1rst_NNNNNN_{x,s,u,v,w}.dat
+        match = re.fullmatch(r"cm1rst_(\d{6})_[xsuvw]\.dat", name)
+        return int(match.group(1)) if match else None
+    if restart_filetype == 3:  # cm1rst_<node>_NNNNNN.dat (nrst is 2nd field)
+        match = re.fullmatch(r"cm1rst_\d{6}_(\d{6})\.dat", name)
+        return int(match.group(1)) if match else None
+    return None  # restart_filetype == 1: single overwritten set, no number
+
+
+def _cm1_restart_files(
+    output_dir: Path,
+    rstnum: int,
+    restart_format: int,
+    restart_filetype: int,
+) -> list[Path]:
+    """Resolve the set of ``cm1rst_*`` files for *rstnum* in *output_dir*."""
+    if restart_format == 2:  # netcdf
+        if restart_filetype == 1:
+            return [output_dir / "cm1rst.nc"]
+        return [output_dir / f"cm1rst_{rstnum:06d}.nc"]
+    # restart_format == 1 (binary)
+    if restart_filetype == 1:
+        return [output_dir / f"cm1rst_{s}.dat" for s in "xsuvw"]
+    if restart_filetype == 2:
+        return [output_dir / f"cm1rst_{rstnum:06d}_{s}.dat" for s in "xsuvw"]
+    if restart_filetype == 3:  # one file per node
+        return sorted(output_dir.glob(f"cm1rst_??????_{rstnum:06d}.dat"))
+    raise ValueError(
+        f"Unsupported restart_format={restart_format}, "
+        f"restart_filetype={restart_filetype}"
+    )
+
+
+def setup_cm1_history_restart(
+    run_dir,
+    extension: _dt.timedelta = _dt.timedelta(0),
+    hr_name: str = "hr1",
+    parent_namelist_path: Optional[PathLike] = None,
+    rstnum: Optional[int] = None,
+    namelist_parameters: Optional[dict[str, str]] = None,
+    backup_parent_namelist: bool = True,
+    render_fn: Callable[..., str] = render_cm1_submit,
+    render_kwargs: dict = {},
+) -> Path:
+    """Set up a CM1 history restart, analogous to :func:`setup_history_restart`.
+
+    CM1 restarts by reading ``cm1rst_*`` files from its working directory
+    (selected by ``rstnum``) and continuing the run **in place**: it writes new
+    model output (``cm1out_*``) and further restart files into the same
+    directory. Because CM1 names restart and output files distinctly, this is
+    non-destructive — the existing ``cm1rst_*`` files are read, not overwritten
+    (for the common numbered layouts), and new output simply continues the
+    sequence. So this works directly in ``{run_dir}/output`` rather than
+    building an isolated directory: it just rewrites ``namelist.input`` there
+    with ``irst=1``, the chosen ``rstnum``, and ``timax`` extended by
+    *extension*, then writes a submit script.
+
+    Args:
+        run_dir: The run directory (the one containing ``output/``). The restart
+            runs in ``{run_dir}/output``, where the ``cm1rst_*`` files live.
+        extension: Added to the existing ``timax``. Defaults to zero, i.e.
+            simply *finish* the original run (e.g. resuming after a SLURM
+            timeout). Pass a positive timedelta only to integrate *beyond* the
+            original end time. CM1 ``timax`` is always in seconds.
+        hr_name: Name for this restart; used for the submit-script filename
+            (``submit_slurm.{hr_name}.sh``) and the stdout stamp prefix.
+        parent_namelist_path: Namelist to use as the template. Defaults to
+            ``{run_dir}/output/namelist.input``, falling back to
+            ``{run_dir}/namelist.input``.
+        rstnum: Restart-file number to start from. Defaults to the highest
+            ``nrst`` present in ``{run_dir}/output`` (i.e. the latest restart).
+            Ignored for single-file restart layouts (``restart_filetype=1``).
+        namelist_parameters: Extra namelist overrides applied on top of the
+            ``irst``/``rstnum``/``timax`` settings (e.g. add parcels on restart).
+        backup_parent_namelist: Before overwriting, copy the existing
+            ``namelist.input`` to ``namelist.input.before_{hr_name}`` (only if
+            that backup doesn't already exist) so the pre-restart config is kept.
+        render_fn: Submit-script renderer; defaults to :func:`render_cm1_submit`.
+        render_kwargs: Machine-specific kwargs forwarded to *render_fn*
+            (``cm1_dir``, ``n_nodes``, ``account``, ``modules``, …).
+
+    Returns:
+        Path to the written submit script.
+    """
+    run_dir = Path(run_dir)
+    output_dir = run_dir / "output"
+
+    # Locate the namelist to use as the template.
+    if parent_namelist_path is not None:
+        parent_namelist_path = Path(parent_namelist_path)
+    else:
+        candidates = [output_dir / "namelist.input", run_dir / "namelist.input"]
+        parent_namelist_path = next((p for p in candidates if p.exists()), None)
+        if parent_namelist_path is None:
+            raise FileNotFoundError(
+                "Could not find a namelist.input; looked in "
+                f"{[str(c) for c in candidates]}. Pass parent_namelist_path."
+            )
+    parent_namelist_text = parent_namelist_path.read_text()
+
+    restart_format = int(_parse_namelist_field(parent_namelist_text, "restart_format") or 1)
+    restart_filetype = int(
+        _parse_namelist_field(parent_namelist_text, "restart_filetype") or 2
+    )
+    parent_timax = float(_require_namelist_field(parent_namelist_text, "timax"))
+    new_timax = parent_timax + extension.total_seconds()
+
+    # Default rstnum: the latest restart written so far.
+    if rstnum is None and restart_filetype != 1:
+        found = {
+            n
+            for p in output_dir.glob("cm1rst_*")
+            if (n := _cm1_rstnum_from_filename(p.name, restart_format, restart_filetype))
+            is not None
+        }
+        if not found:
+            raise FileNotFoundError(
+                f"No cm1rst_* restart files found in {output_dir} for "
+                f"restart_format={restart_format}, restart_filetype={restart_filetype}."
+            )
+        rstnum = max(found)
+        print(f"Defaulting rstnum to latest restart file: {rstnum}")
+    elif rstnum is None:
+        rstnum = 1  # filetype=1 ignores the number; CM1 still wants rstnum set
+
+    # Sanity-check the restart files for the chosen rstnum exist.
+    restart_files = _cm1_restart_files(
+        output_dir, rstnum, restart_format, restart_filetype
+    )
+    missing = [str(p) for p in restart_files if not p.exists()]
+    if missing:
+        raise FileNotFoundError(f"Restart file(s) not found: {missing}")
+
+    # Preserve the pre-restart namelist, then rewrite namelist.input in place.
+    if backup_parent_namelist:
+        backup = output_dir / f"namelist.input.before_{hr_name}"
+        live = output_dir / "namelist.input"
+        if live.exists() and not backup.exists():
+            shutil.copy2(str(live), str(backup))
+
+    namelist_parameters = {
+        "irst": "1",
+        "rstnum": str(rstnum),
+        "timax": f"{new_timax}",
+        **(namelist_parameters or {}),
+    }
+    generate_cm1_namelist(
+        output_dir=output_dir,
+        namelist_template_path=parent_namelist_path,
+        parameters=namelist_parameters,
+    )
+
+    # Render the submit script. render_cm1_submit runs in {run_dir}/output,
+    # which is exactly where the restart files and namelist now live. Reuse the
+    # cm1.exe already there rather than re-copying it, so the resumed portion
+    # runs the same binary as the original (in case cm1_dir was rebuilt since).
+    # `copy_executable` can be overridden via render_kwargs if really desired.
+    stdout_dir = run_dir / "stdout"
+    stdout_dir.mkdir(exist_ok=True)
+    submit_script_path = run_dir / f"submit_slurm.{hr_name}.sh"
+    submit_script_path.write_text(
+        render_fn(
+            run_name=hr_name,
+            run_dir=run_dir,
+            stdout_dir=stdout_dir,
+            **{"copy_executable": False, **render_kwargs},
         )
     )
     return submit_script_path
