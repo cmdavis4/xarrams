@@ -6,6 +6,7 @@ model output fields using MetPy.
 """
 
 from __future__ import annotations
+import warnings
 
 import xarray as xr
 import pandas as pd
@@ -15,7 +16,7 @@ from metpy.units import units
 import matplotlib.pyplot as plt
 from carlee_tools.plotting import clean_legend
 
-from .constants import DEFAULT_BSR_VARIABLES
+from .constants import DEFAULT_BSR_VARIABLES, C_p, R_d, p0
 
 
 def calculate_thermodynamic_variables(
@@ -94,14 +95,33 @@ def calculate_thermodynamic_variables(
             f"in dataset and fail_if_missing_vars was True; required: {needed_vars}"
         )
 
+    # Pull the raw float magnitudes out of the pint scalar constants once.
+    # `.magnitude` on a pint Quantity is a plain Python number and never
+    # triggers evaluation of a dask-backed xarray DataArray it's combined
+    # with; `.dequantify()` only exists on the xarray pint accessor, not
+    # on bare pint Quantities, so calling it here would raise.
+    c_p_magnitude = C_p.to("J/kg/K").magnitude  # J/(kg*K)
+    R_d_magnitude = R_d.to("J/kg/K").magnitude  # J/(kg*K)
+    p0_hPa_magnitude = p0.to("hPa").magnitude  # hPa
+
+    if vars_are_present(["PI"]):
+        # P = p0 * (PI / c_p) ** (c_p / R_d); stays lazy because every
+        # operand other than ds["PI"] is a plain float.
+        ds["P"] = p0_hPa_magnitude * (
+            (ds["PI"] / c_p_magnitude) ** (c_p_magnitude / R_d_magnitude)
+        )
+
+    # Also handle the reverse case, which sometimes happens with CM1
+    if not vars_are_present(["PI"]) and vars_are_present(["P"]):
+        ds["PI"] = c_p_magnitude * (ds["P"] / p0_hPa_magnitude) ** (
+            R_d_magnitude / c_p_magnitude
+        )
+
     if vars_are_present(["PI", "THETA"]):
-        ds["T"] = ds["PI"] * ds["THETA"] / 1004.0
+        ds["T"] = ds["PI"] * ds["THETA"] / c_p_magnitude
 
     if vars_are_present(["RTP", "RV"]):
         ds["R_condensate"] = ds["RTP"] - ds["RV"]
-
-    if vars_are_present(["PI"]):
-        ds["P"] = 1000.0 * ((ds["PI"] / 1004.0) ** (1004.0 / 287.0))
 
     if vars_are_present(["P", "RV"]):
         vp = mpc.vapor_pressure(ds["P"] * units("hPa"), ds["RV"] * units("kg/kg"))
@@ -131,10 +151,14 @@ def calculate_thermodynamic_variables(
             ds["P"] * units("hPa"), ds["T"] * units("K"), ds["RV"]
         ).pint.dequantify()
         ds["supersaturated"] = ds["RH"] >= 1
-        ds["theta_v"] = mpc.virtual_potential_temperature(
-            pressure=ds["P"] * units("hPa"),
-            temperature=ds["T"] * units("K"),
-            mixing_ratio=ds["RV"],
+        ds["theta_v"] = (
+            mpc.virtual_potential_temperature(
+                pressure=ds["P"] * units("hPa"),
+                temperature=ds["T"] * units("K"),
+                mixing_ratio=ds["RV"],
+            )
+            .pint.to("K")
+            .pint.dequantify()
         )
 
     if vars_are_present(["THETA", "RV", "R_condensate"]):
@@ -191,13 +215,25 @@ def calculate_thermodynamic_variables(
                 mpconstants.g * (ds["theta_rho"] - tr_layer_mean) / tr_layer_mean
             ).pint.dequantify()
 
-        if vars_are_present(["DN0"]):
-            ds["air_mass"] = ds["DN0"] * 500**2 * ds["z"].diff(dim="z")
-
     if passed_dataframe:
         return pd.DataFrame(ds)
     else:
         return ds
+
+
+def set_bottom_left_as_origin(ds):
+    ds = ds.copy()
+    ds["x"] = ds["x"] - min(ds["x"])
+    ds["y"] = ds["y"] - min(ds["y"])
+    return ds
+
+
+def add_middle_coordinates_to_ds(ds):
+    ds = ds.copy()
+    for var in ["x", "y"]:
+        ds[f"{var}_middle"] = ds[var].max().values / 2
+        ds[f"{var}_middle_ix"] = len(ds[var]) // 2
+    return ds
 
 
 def calculate_derived_variables(storm_ds: xr.Dataset) -> xr.Dataset:
@@ -213,15 +249,16 @@ def calculate_derived_variables(storm_ds: xr.Dataset) -> xr.Dataset:
     Returns:
         Dataset with derived variables and preprocessing applied.
     """
+    warnings.warn(
+        "calculate_derived_variables is deprecated and will be removed eventually. Use"
+        " postprocess_rams_output instead.",
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
     print("Calculating derived variables...")
     storm_ds = calculate_thermodynamic_variables(storm_ds)
-
-    storm_ds["x"] = storm_ds["x"] - min(storm_ds["x"])
-    storm_ds["y"] = storm_ds["y"] - min(storm_ds["y"])
-
-    for var in ["x", "y"]:
-        storm_ds[f"{var}_middle"] = storm_ds[var].max().values / 2
-        storm_ds[f"{var}_middle_ix"] = len(storm_ds[var]) // 2
+    storm_ds = set_bottom_left_as_origin(storm_ds)
+    storm_ds = add_middle_coordinates_to_ds(storm_ds)
 
     return storm_ds
 
@@ -259,6 +296,10 @@ def calculate_bsr_variables(
         # Then drop it from the base state to avoid confusion
         base_state = base_state.squeeze()
 
+    # If an empty list is passed for bsr_variables, assume this means don't
+    # calculate any (ie just want t_minutes)
+    if bsr_variables == []:
+        return ds
     base_state = base_state.mean(["x", "y"])
     for var in bsr_variables or DEFAULT_BSR_VARIABLES:
         if var in ds.data_vars:
@@ -566,3 +607,35 @@ def bubble_perturbation_field(
     axs[0, 1].set_ylabel("z (m)")
 
     return theta, theta_v
+
+
+def postprocess_simulation_output(
+    ds,
+    base_state_ds=None,
+    calculate_thermodynamics=True,
+    calculate_bsr=True,
+    translate_to_00_origin=True,
+    add_middle_coordinates=True,
+    bsr_variables=None,
+):
+
+    # Thermodynamics first
+    if calculate_thermodynamics:
+        ds = calculate_thermodynamic_variables(ds)
+    # Then base-state relative
+    if calculate_bsr:
+        if not base_state_ds:
+            print(
+                "No base_state_ds passed to postprocess_rams_output; assuming first"
+                " timestep of rams_ds is the base state"
+            )
+            base_state_ds = ds.isel(time=0)
+        ds = calculate_bsr_variables(
+            ds=ds, base_state=base_state_ds, bsr_variables=bsr_variables
+        )
+    # Then translate and add coordinates
+    if translate_to_00_origin:
+        ds = set_bottom_left_as_origin(ds)
+    if add_middle_coordinates:
+        ds = add_middle_coordinates_to_ds(ds)
+    return ds
