@@ -6,6 +6,8 @@ and utilities for writing soundings in RAMS-compatible format.
 
 from __future__ import annotations
 
+import os
+import re
 from typing import Optional, Union, List
 
 import matplotlib.pyplot as plt
@@ -23,6 +25,7 @@ from carlee_tools.plotting import clean_legend, get_nth_color
 
 from .constants import SOUNDING_NAMELIST_VARIABLES, C_p, R_d, p0, reps
 from .calculations import calculate_thermodynamic_variables
+from .execution import _parse_ramsin_field
 
 
 def format_sounding_field_ramsin_str(
@@ -130,6 +133,7 @@ def write_rams_formatted_sounding(
 def plot_sounding_skewt(
     column_df: pd.DataFrame,
     barbs: bool = True,
+    mixing_ratios=[11e-3, 12e-3, 13e-3, 14e-3],
     skew=None,
     ax: Optional[plt.Axes] = None,
     fig: Optional[plt.Figure] = None,
@@ -212,6 +216,11 @@ def plot_sounding_skewt(
         h.add_grid(increment=10)
         h.plot_colormapped(column_df["US"], column_df["VS"], column_df["z"])
 
+    # Add lines of constant mixing ratio
+    skewt.plot_mixing_lines(
+        mixing_ratio=np.array(mixing_ratios) if mixing_ratios else mixing_ratios
+    )
+
     # Dual-label y-axis with pressure and height
     p_ticks = skewt.ax.get_yticks()
     z_at_ticks = np.interp(p_ticks, column_df["PS"][::-1], column_df["z"][::-1])
@@ -259,6 +268,297 @@ def to_sounding_df(ds):
     })
 
 
+def _parse_ramsin_sounding_array(ramsin_text: str, field_name: str) -> Optional[np.ndarray]:
+    """Parse a multi-line sounding array (``PS``, ``TS``, ...) from a RAMSIN.
+
+    The single-field parser in :mod:`execution` stops at the first comma,
+    which truncates the comma-separated sounding profiles. This grabs every
+    value of *field_name* from its ``=`` up to the next namelist variable
+    assignment (a line beginning ``NAME =``) or the closing ``$END``.
+
+    Args:
+        ramsin_text: Full text of the RAMSIN namelist.
+        field_name: Sounding field to extract (e.g. ``"PS"``).
+
+    Returns:
+        Array of the field's values, or ``None`` if the field is absent.
+    """
+    # Capture everything after "FIELD =" lazily until we hit either the next
+    # namelist assignment (a line that starts with an identifier followed by
+    # "="), the end of the namelist block ($END), or the end of the text.
+    field_value_match = re.search(
+        rf"(?ms)^\s*{re.escape(field_name)}\s*=\s*(.*?)"
+        rf"(?=^\s*[A-Za-z_]\w*\s*=|^\s*\$END\b|\Z)",
+        ramsin_text,
+    )
+    if field_value_match is None:
+        return None
+
+    # Drop any Fortran "!" trailing comments before tokenizing the numbers.
+    raw_values_text = re.sub(r"!.*", "", field_value_match.group(1))
+
+    # Split on commas/whitespace and parse each token as a float, translating
+    # Fortran double-precision exponent markers ("1.0D3") into Python form.
+    sounding_values = []
+    for token in re.split(r"[,\s]+", raw_values_text.strip()):
+        if not token:
+            continue
+        sounding_values.append(float(token.replace("D", "e").replace("d", "e")))
+    return np.array(sounding_values)
+
+
+def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
+    """Parse a RAMSIN's initial sounding into a sounding DataFrame.
+
+    Reads the ``$MODEL_SOUND`` block of a RAMSIN — the ``IPSFLG``, ``ITSFLG``,
+    ``IRTSFLG``, and ``IUSFLG`` unit flags plus the ``PS``, ``TS``, ``RTS``,
+    ``US``, and ``VS`` profile arrays — and converts it to the same column
+    layout produced by :func:`to_sounding_df`: ``z`` (m), ``PS`` (hPa),
+    ``TS`` (degC), ``RTS`` (percent RH), ``US`` (m/s), ``VS`` (m/s).
+
+    The unit conversions mirror RAMS' own ``arrsnd`` routine
+    (``src/init/rhhi.f90``) so the returned profile matches what RAMS actually
+    ingests — including the hydrostatic integration RAMS uses to assign height
+    levels (``z``) to the pressure-specified input sounding.
+
+    Args:
+        ramsin: Path to a RAMSIN file, or the raw RAMSIN text itself.
+
+    Returns:
+        DataFrame with columns ``z``, ``PS``, ``TS``, ``RTS``, ``US``, ``VS``.
+
+    Raises:
+        NotImplementedError: If ``IPSFLG`` is not 0 (millibar levels). The
+            ``IPSFLG=1`` height-level form needs RAMS' interleaved hydrostatic
+            pressure integration, which is not reproduced here.
+        ValueError: If a required sounding flag or array is missing.
+    """
+    # Accept either a path to a RAMSIN file or the namelist text directly.
+    try:
+        ramsin_is_a_file = os.path.isfile(ramsin)
+    except (TypeError, ValueError):
+        # Very long strings / embedded nulls aren't valid path arguments.
+        ramsin_is_a_file = False
+    if ramsin_is_a_file:
+        with open(ramsin) as ramsin_file:
+            ramsin_text = ramsin_file.read()
+    else:
+        ramsin_text = str(ramsin)
+
+    # --- Unit flags ---------------------------------------------------------
+    # Read a scalar integer flag, reusing the single-field RAMSIN parser.
+    def read_flag(flag_name: str, default: Optional[int] = None) -> int:
+        raw_flag = _parse_ramsin_field(ramsin_text, flag_name)
+        if raw_flag is None:
+            if default is None:
+                raise ValueError(f"RAMSIN sounding flag {flag_name} not found")
+            return default
+        return int(raw_flag)
+
+    pressure_flag = read_flag("IPSFLG")  # 0=mb, 1=height(m) w/ PS(1)=sfc pressure
+    temperature_flag = read_flag("ITSFLG")  # 0=degC, 1=K, 2=theta(K)
+    moisture_flag = read_flag("IRTSFLG")  # 0/1=dewpt, 2=mixrat, 3=RH%, 4=dewpt depr.
+    wind_flag = read_flag("IUSFLG", default=0)  # 0=U/V components, else dir/speed
+
+    if pressure_flag not in (0, 1):
+        raise NotImplementedError(
+            f"Only IPSFLG=0 (millibar levels) and IPSFLG=1 (height levels) are"
+            f" supported; got IPSFLG={pressure_flag}."
+        )
+
+    # --- Sounding arrays ----------------------------------------------------
+    raw_sounding_fields = {}
+    for field_name in SOUNDING_NAMELIST_VARIABLES:
+        field_values = _parse_ramsin_sounding_array(ramsin_text, field_name)
+        if field_values is None:
+            raise ValueError(f"RAMSIN sounding field {field_name} not found")
+        raw_sounding_fields[field_name] = field_values
+
+    pressure_mb = raw_sounding_fields["PS"]
+    temperature_in = raw_sounding_fields["TS"]
+    moisture_in = raw_sounding_fields["RTS"]
+    us = raw_sounding_fields["US"].astype(float)
+    vs = raw_sounding_fields["VS"].astype(float)
+
+    # RAMS treats the first PS==0 entry as the end of the sounding; truncate
+    # all fields to the number of real levels before that sentinel.
+    end_of_sounding = np.where(pressure_mb == 0.0)[0]
+    n_levels = int(end_of_sounding[0]) if end_of_sounding.size else len(pressure_mb)
+    pressure_mb = pressure_mb[:n_levels]
+    temperature_in = temperature_in[:n_levels]
+    moisture_in = moisture_in[:n_levels]
+    us = us[:n_levels]
+    vs = vs[:n_levels]
+
+    # --- Thermodynamic constants (matched to RAMS rconstants) ---------------
+    R_d_val = R_d.to("J/kg/K").magnitude
+    C_p_val = C_p.to("J/kg/K").magnitude
+    p00_Pa = p0.to("Pa").magnitude
+    # RAMS hardcodes g = 9.80 (rconstants.f90), not the standard 9.80665; use
+    # its value so the hydrostatic integration matches RAMS bit-for-bit.
+    g_val = 9.80
+    R_over_cp = R_d_val / C_p_val  # rocp
+    cp_over_R = C_p_val / R_d_val  # cpor
+    p00_to_rocp = p00_Pa**R_over_cp  # p00k
+
+    # --- Pressure: -> Pa ----------------------------------------------------
+    # IPSFLG=0 gives pressure directly in millibars. IPSFLG=1 instead gives
+    # heights (m) for levels 2..N, with PS(1) the surface pressure in mb, and
+    # RAMS recovers pressure by integrating the hydrostatic equation upward.
+    if pressure_flag == 0:
+        # Pressure given in millibars.
+        pressure_pa = pressure_mb * 100.0
+    else:
+        # PS holds the surface pressure (mb) then heights (m); the input array
+        # is named *pressure_mb* but here its tail entries are heights.
+        height_levels_m = pressure_mb
+        # Virtual-temperature correction factor for the integration. RAMS only
+        # applies it when moisture is supplied as a mixing ratio (IRTSFLG=2);
+        # *moisture_in* is then in g/kg, hence the 1e-3.
+        if moisture_flag == 2:
+            virtual_correction = 1.0 + 0.61 * moisture_in * 1.0e-3
+        else:
+            virtual_correction = np.ones(n_levels)
+        # Offset that converts the raw TS values to Kelvin for the integration
+        # (only used for the temperature/Kelvin forms, not theta).
+        temperature_offset = 273.15 if temperature_flag == 0 else 0.0
+
+        pressure_pa = np.zeros(n_levels)
+        pressure_pa[0] = height_levels_m[0] * 100.0  # surface pressure mb -> Pa
+        for k in range(1, n_levels):
+            # Layer thickness between successive input height levels.
+            layer_thickness_m = height_levels_m[k] - height_levels_m[k - 1]
+            if temperature_flag in (0, 1):
+                # Layer-mean (virtual) temperature in Kelvin from the TS inputs.
+                layer_mean_temperature = 0.5 * (
+                    (temperature_in[k] + temperature_offset) * virtual_correction[k]
+                    + (temperature_in[k - 1] + temperature_offset)
+                    * virtual_correction[k - 1]
+                )
+                pressure_pa[k] = pressure_pa[k - 1] * np.exp(
+                    -g_val * layer_thickness_m / (R_d_val * layer_mean_temperature)
+                )
+            else:  # temperature_flag == 2: TS holds potential temperature
+                # Layer-mean (virtual) potential temperature.
+                layer_mean_theta = 0.5 * (
+                    temperature_in[k] * virtual_correction[k]
+                    + temperature_in[k - 1] * virtual_correction[k - 1]
+                )
+                # Hydrostatic integration in Exner/theta form.
+                pressure_pa[k] = (
+                    pressure_pa[k - 1] ** R_over_cp
+                    - g_val * layer_thickness_m * p00_to_rocp
+                    / (C_p_val * layer_mean_theta)
+                ) ** cp_over_R
+
+    # --- Winds: direction/speed -> U,V components if needed -----------------
+    # RAMS leaves 9999. entries untouched here and interpolates them below.
+    if wind_flag != 0:
+        wind_is_given = us != 9999.0
+        wind_direction_deg = us[wind_is_given]
+        wind_speed = vs[wind_is_given]
+        us[wind_is_given] = -wind_speed * np.sin(np.deg2rad(wind_direction_deg))
+        vs[wind_is_given] = -wind_speed * np.cos(np.deg2rad(wind_direction_deg))
+    # Interpolate any 9999. (missing) wind levels in pressure, as RAMS does.
+    wind_is_missing = us == 9999.0
+    if wind_is_missing.any():
+        wind_is_given = ~wind_is_missing
+        # np.interp needs increasing sample points, but pressure decreases with
+        # height, so reverse both the samples and their coordinates.
+        us[wind_is_missing] = np.interp(
+            pressure_pa[wind_is_missing],
+            pressure_pa[wind_is_given][::-1],
+            us[wind_is_given][::-1],
+        )
+        vs[wind_is_missing] = np.interp(
+            pressure_pa[wind_is_missing],
+            pressure_pa[wind_is_given][::-1],
+            vs[wind_is_given][::-1],
+        )
+
+    # --- Temperature: -> Kelvin ---------------------------------------------
+    if temperature_flag == 0:
+        # Temperature given in degrees Celsius.
+        temperature_k = temperature_in + 273.15
+    elif temperature_flag == 1:
+        # Temperature already in Kelvin.
+        temperature_k = temperature_in.astype(float)
+    elif temperature_flag == 2:
+        # Potential temperature in Kelvin -> actual temperature.
+        temperature_k = (pressure_pa / p00_Pa) ** R_over_cp * temperature_in
+    else:
+        raise ValueError(f"Unknown temperature flag ITSFLG={temperature_flag}")
+
+    # --- Moisture: -> mixing ratio (kg/kg) ----------------------------------
+    # Saturation mixing ratio at a given pressure/temperature, matching RAMS'
+    # internal `mrsl` call (metpy's formulation differs trivially).
+    def saturation_mixing_ratio(pressure_pa_arr, temperature_k_arr):
+        return (
+            mpc.saturation_mixing_ratio(
+                total_press=pressure_pa_arr * units("Pa"),
+                temperature=temperature_k_arr * units("K"),
+            )
+            .to("kg/kg")
+            .magnitude
+        )
+
+    if moisture_flag == 0:
+        # Dew point in degrees Celsius.
+        mixing_ratio_kgkg = saturation_mixing_ratio(pressure_pa, moisture_in + 273.15)
+    elif moisture_flag == 1:
+        # Dew point in Kelvin.
+        mixing_ratio_kgkg = saturation_mixing_ratio(pressure_pa, moisture_in)
+    elif moisture_flag == 2:
+        # Mixing ratio in g/kg.
+        mixing_ratio_kgkg = moisture_in * 1.0e-3
+    elif moisture_flag == 3:
+        # Relative humidity in percent: scale the saturation mixing ratio.
+        mixing_ratio_kgkg = (
+            saturation_mixing_ratio(pressure_pa, temperature_k) * moisture_in * 0.01
+        )
+    elif moisture_flag == 4:
+        # Dew point depression in Kelvin (subtracted from temperature).
+        mixing_ratio_kgkg = saturation_mixing_ratio(
+            pressure_pa, temperature_k - moisture_in
+        )
+    else:
+        raise ValueError(f"Unknown humidity flag IRTSFLG={moisture_flag}")
+
+    # --- Heights: hydrostatic integration from the surface (z=0) ------------
+    # Mirrors the `hs` loop in arrsnd: integrate the hypsometric equation
+    # downward in pressure using layer-mean virtual temperature.
+    virtual_temperature_k = temperature_k * (1.0 + 0.61 * mixing_ratio_kgkg)
+    heights_m = np.zeros(n_levels)
+    for k in range(1, n_levels):
+        # Layer-mean virtual temperature across the (k-1, k) interval.
+        layer_mean_tv = 0.5 * (virtual_temperature_k[k] + virtual_temperature_k[k - 1])
+        # Hypsometric thickness; pressure decreases upward so the log term is
+        # negative, and the leading minus sign makes the height increase.
+        heights_m[k] = heights_m[k - 1] - R_d_val * layer_mean_tv * (
+            np.log(pressure_pa[k]) - np.log(pressure_pa[k - 1])
+        ) / g_val
+
+    # --- Assemble the output DataFrame in to_sounding_df's column layout ----
+    relative_humidity_percent = (
+        mpc.relative_humidity_from_mixing_ratio(
+            pressure=pressure_pa * units("Pa"),
+            temperature=temperature_k * units("K"),
+            mixing_ratio=mixing_ratio_kgkg * units("dimensionless"),
+        )
+        .to("dimensionless")
+        .magnitude
+        * 100.0  # frac -> percent
+    )
+    return pd.DataFrame({
+        "z": heights_m,
+        "PS": pressure_pa / 100.0,  # Pa -> hPa
+        "TS": temperature_k - 273.15,  # K -> degC
+        "RTS": relative_humidity_percent,
+        "US": us,
+        "VS": vs,
+    })
+
+
 def calculate_sounding_derived_vars(df):
     df = df.copy()
     df["dewpoint"] = mpc.dewpoint_from_relative_humidity(
@@ -294,11 +594,36 @@ def calculate_sounding_derived_vars(df):
     capes = np.zeros(len(df)) * units("J/kg")
     cins = np.zeros(len(df)) * units("J/kg")
     for ix in tqdm(list(range(len(df)))):
-        profile = mpc.parcel_profile(
-            pressure=Ps[ix:],
-            temperature=Ts[ix],
-            dewpoint=DPs[ix],
-        )
+        try:
+            profile = mpc.parcel_profile(
+                pressure=Ps[ix:],
+                temperature=Ts[ix],
+                dewpoint=DPs[ix],
+            )
+        except ValueError as e:
+            print(f"[probe] parcel_profile FAILED at ix={ix} / len(df)={len(df)}")
+            print(f"[probe] len(Ps[ix:]) = {len(Ps[ix:])}")
+            print(f"[probe] Ts[ix] = {Ts[ix]!r}")
+            print(f"[probe] DPs[ix] = {DPs[ix]!r}")
+            print(f"[probe] Ps[ix:] (first 5) = {Ps[ix:][:5]!r}")
+            print(f"[probe] Ps[ix:] (last 5)  = {Ps[ix:][-5:]!r}")
+            # Inspect _parcel_profile_helper shapes directly
+            from metpy.calc.thermo import _parcel_profile_helper
+
+            try:
+                pl, plcl, pu, tl, tlcl, tu = _parcel_profile_helper(
+                    Ps[ix:], Ts[ix], DPs[ix]
+                )
+                print(f"[probe] press_lower.shape = {np.shape(pl)}")
+                print(f"[probe] press_lcl         = {plcl!r}")
+                print(f"[probe] press_upper.shape = {np.shape(pu)}")
+                print(f"[probe] temp_lower.shape  = {np.shape(tl)}")
+                print(f"[probe] temp_lcl          = {tlcl!r}")
+                print(f"[probe] temp_upper.shape  = {np.shape(tu)}  <-- expected 1D")
+                print(f"[probe] temp_upper        = {tu!r}")
+            except Exception as inner:
+                print(f"[probe] helper itself raised: {inner!r}")
+            raise
         capes[ix], cins[ix] = mpc.cape_cin(
             pressure=Ps[ix:],
             temperature=Ts[ix:],
@@ -495,16 +820,19 @@ def wk84_sounding(
     # Reattach units for downstream code that expects Quantities
     Ps = Ps_val * units("Pa")
     Ts = Ts_val * units("K")
-    # Convert this back to an RH; I assume this is just for full consistency?
-    rhs = (
-        mpc.relative_humidity_from_mixing_ratio(
-            pressure=Ps,
-            temperature=Ts,
-            mixing_ratio=qvs * units("dimensionless"),
-        )
-        .to("dimensionless")
-        .magnitude
-    )
+    # Convert the capped mixing ratio back to the RH that gets written to the
+    # sounding. RAMS (and CM1) recover qv from a sounding RH as
+    #     qv = RH * q_sat(P, T),
+    # i.e. they treat the stored RH as the simple ratio w / w_sat, so we must
+    # build RH the same way here. metpy.relative_humidity_from_mixing_ratio
+    # would instead return the thermodynamic humidity e / e_sat, which differs
+    # by a factor (eps + w_sat) / (eps + w). That factor inflates the recovered
+    # qv by ~1.5% above the q_v0 cap and, because w_sat falls with height, tilts
+    # what should be a constant well-mixed-layer qv. Forming RH as w / w_sat
+    # makes the recovered qv land flat on q_v0, matching CM1 base.F
+    # (rh0 = qv0 / rslf). q_vsat is the saturation mixing ratio from the final
+    # iteration above, evaluated at this same Ps / Ts.
+    rhs = qvs / q_vsat
 
     # Wind shear (Seigel & van den Heever 2014 pressure-based formulation).
     shear_layer_top_z_idx = np.argmin(np.abs(internal_zs - shear_layer_depth))
@@ -637,20 +965,31 @@ def plot_base_state_diagnostics(bs_ds):
     bs_df = calculate_sounding_derived_vars(bs_df)
     lcl = bs_df.iloc[0]["lcl"]
 
+    # Always do sounding diagnostics
     fig, axs = plt.subplots(ncols=2, nrows=3, figsize=(7, 10), layout="constrained")
     plot_sounding_diagnostics(bs_df, axs=axs[:2, :])
 
-    ccn_ax = axs[2, 0]
-    ccn_ax.plot(
-        bs_ds["CN1NP"].mean(["x", "y"]).values / 1e6, bs_ds["z"].values, label="CCN1"
-    )
-    ccn_ax.plot(
-        bs_ds["CN2NP"].mean(["x", "y"]).values / 1e6, bs_ds["z"].values, label="CCN2"
-    )
-    clean_legend(ccn_ax, frameon=False)
-    ccn_ax.set_title("CCN number concentration")
-    ccn_ax.set_xlabel("#/mg")
-    ccn_ax.set_ylabel("z (m)")
+    # Do CCN if present
+    if ("CN1NP" in bs_ds.data_vars) or ("CN2NP" in bs_ds.data_vars):
+        ccn_ax = axs[2, 0]
+        if "CN1NP" in bs_ds.data_vars:
+            ccn_ax.plot(
+                bs_ds["CN1NP"].mean(["x", "y"]).values / 1e6,
+                bs_ds["z"].values,
+                label="CCN1",
+            )
+        if "CN2NP" in bs_ds.data_vars:
+            ccn_ax.plot(
+                bs_ds["CN2NP"].mean(["x", "y"]).values / 1e6,
+                bs_ds["z"].values,
+                label="CCN2",
+            )
+        clean_legend(ccn_ax, frameon=False)
+        ccn_ax.set_title("CCN number concentration")
+        ccn_ax.set_xlabel("#/mg")
+        ccn_ax.set_ylabel("z (m)")
+    else:
+        axs[2, 0].set_axis_off()
 
     axs[2, 1].set_axis_off()
 
