@@ -61,6 +61,10 @@ HASHES="##############################"
   echo "$HASHES"
 } | tee "$STAMPED_STDOUT" > "$CURRENT_STDOUT"
 
+# Set MPI to use romio, for if we're doing parallel parcel writes
+export OMPI_MCA_io=romio321
+# disable HCOLL (fixes the MPI_Comm_dup crash)
+export OMPI_MCA_coll_hcoll_enable=0
 # Run and tee output to both datetime-stamped and current files
 {{mpi_launcher}} {{n_cores}} ./cm1.exe \
   > >(tee -a "$STAMPED_STDOUT" >> "$CURRENT_STDOUT") \
