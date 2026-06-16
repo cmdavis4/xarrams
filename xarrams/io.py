@@ -593,6 +593,7 @@ def read_cm1_output(
                 drop_variables=drop_vars,
                 parallel=True,
                 chunks=chunks,
+                engine="h5netcdf",
                 **open_dataset_kwargs,
             )
     else:
@@ -603,6 +604,7 @@ def read_cm1_output(
             ds = xr.open_dataset(
                 ds_path,
                 drop_variables=drop_vars,
+                engine="h5netcdf",
                 **open_dataset_kwargs,
             )
             ds = _sanitized_preprocess(ds)

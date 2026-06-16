@@ -78,32 +78,46 @@ def generate_cm1_namelist(
 
 
 def _calculate_ramslike_derived_variables(cm1_ds):
-    cm1_ds = cm1_ds.copy()
-    cm1_ds["RTP"] = (
-        cm1_ds["RV"]
-        + cm1_ds["RCP"]
-        + cm1_ds["RRP"]
-        + cm1_ds["RPP"]
-        + cm1_ds["RSP"]
-        + cm1_ds["RGP"]
-    )
+    if all([
+        var in cm1_ds.data_vars
+        for var in ["RTP", "RV", "RCP", "RRP", "RPP", "RSP", "RGP"]
+    ]):
+        cm1_ds = cm1_ds.copy()
+        cm1_ds["RTP"] = (
+            cm1_ds["RV"]
+            + cm1_ds["RCP"]
+            + cm1_ds["RRP"]
+            + cm1_ds["RPP"]
+            + cm1_ds["RSP"]
+            + cm1_ds["RGP"]
+        )
     return cm1_ds
 
 
 def coerce_to_ramslike(
-    cm1_ds, start_datetime=CM1_DEFAULT_START_DATETIME, time_dim_name="time"
+    cm1_ds,
+    start_datetime=CM1_DEFAULT_START_DATETIME,
+    time_dim_name="time",
+    keep_non_coercable=False,
 ):
     # First limit to the variables we can map directly, and that are present
-    present_coercables = [
+    coercable_vars = [
         x for x in CM1_TO_RAMS_VARIABLE_NAMES.keys() if x in cm1_ds.data_vars
     ]
-    cm1_ds = cm1_ds[present_coercables]
+    coercable_dims = {
+        k: v for k, v in CM1_TO_RAMS_DIM_MAPPINGS.items() if k in cm1_ds.dims
+    }
+    if not keep_non_coercable:
+        cm1_ds = cm1_ds[coercable_vars]
     # Rename dimensions
-    cm1_ds = cm1_ds.rename(CM1_TO_RAMS_DIM_MAPPINGS)
+    cm1_ds = cm1_ds.rename(coercable_dims)
     # Rename data variables
     cm1_ds = cm1_ds.rename(
-        {k: v for k, v in CM1_TO_RAMS_VARIABLE_NAMES.items() if k in present_coercables}
+        {k: v for k, v in CM1_TO_RAMS_VARIABLE_NAMES.items() if k in coercable_vars}
     )
+    # PI differs by a factor of 1004 between RAMS and CM1
+    if "PI" in cm1_ds.data_vars:
+        cm1_ds["PI"] = cm1_ds["PI"] * 1004.0
     # Calculate other base RAMS variables that we can get directly from these
     cm1_ds = _calculate_ramslike_derived_variables(cm1_ds)
     # Fix the time coordinate
