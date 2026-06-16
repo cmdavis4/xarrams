@@ -268,7 +268,9 @@ def to_sounding_df(ds):
     })
 
 
-def _parse_ramsin_sounding_array(ramsin_text: str, field_name: str) -> Optional[np.ndarray]:
+def _parse_ramsin_sounding_array(
+    ramsin_text: str, field_name: str
+) -> Optional[np.ndarray]:
     """Parse a multi-line sounding array (``PS``, ``TS``, ...) from a RAMSIN.
 
     The single-field parser in :mod:`execution` stops at the first comma,
@@ -362,7 +364,7 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
 
     if pressure_flag not in (0, 1):
         raise NotImplementedError(
-            f"Only IPSFLG=0 (millibar levels) and IPSFLG=1 (height levels) are"
+            "Only IPSFLG=0 (millibar levels) and IPSFLG=1 (height levels) are"
             f" supported; got IPSFLG={pressure_flag}."
         )
 
@@ -447,7 +449,9 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
                 # Hydrostatic integration in Exner/theta form.
                 pressure_pa[k] = (
                     pressure_pa[k - 1] ** R_over_cp
-                    - g_val * layer_thickness_m * p00_to_rocp
+                    - g_val
+                    * layer_thickness_m
+                    * p00_to_rocp
                     / (C_p_val * layer_mean_theta)
                 ) ** cp_over_R
 
@@ -534,9 +538,13 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
         layer_mean_tv = 0.5 * (virtual_temperature_k[k] + virtual_temperature_k[k - 1])
         # Hypsometric thickness; pressure decreases upward so the log term is
         # negative, and the leading minus sign makes the height increase.
-        heights_m[k] = heights_m[k - 1] - R_d_val * layer_mean_tv * (
-            np.log(pressure_pa[k]) - np.log(pressure_pa[k - 1])
-        ) / g_val
+        heights_m[k] = (
+            heights_m[k - 1]
+            - R_d_val
+            * layer_mean_tv
+            * (np.log(pressure_pa[k]) - np.log(pressure_pa[k - 1]))
+            / g_val
+        )
 
     # --- Assemble the output DataFrame in to_sounding_df's column layout ----
     relative_humidity_percent = (
@@ -559,7 +567,7 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
     })
 
 
-def calculate_sounding_derived_vars(df):
+def calculate_sounding_derived_vars(df, cape=True):
     df = df.copy()
     df["dewpoint"] = mpc.dewpoint_from_relative_humidity(
         temperature=df["TS"].values * units("degC"),
@@ -644,6 +652,40 @@ def calculate_sounding_derived_vars(df):
         df["PS"].values[::-1],
         df["z"].values[::-1],
     )
+
+    # Calculate CAPE for low-levels just bc it's mildly expensive to calculate.
+    # We only vary the *starting* level of the parcel over the low levels, but
+    # the CAPE/CIN integration must extend over the full column above the parcel
+    # (truncating the column truncates the positive area and undercounts CAPE).
+    if cape:
+        Ps = df["PS"].values * units("hPa")
+        Ts = df["TS"].values * units("degC")
+        DPs = df["dewpoint"].values * units("degC")
+
+        n_ll = int((df["z"] <= 4000).sum())
+        capes = np.zeros(n_ll) * units("J/kg")
+        cins = np.zeros(n_ll) * units("J/kg")
+        for ix in tqdm(list(range(n_ll))):
+            profile = mpc.parcel_profile(
+                pressure=Ps[ix:],
+                temperature=Ts[ix],
+                dewpoint=DPs[ix],
+            )
+            capes[ix], cins[ix] = mpc.cape_cin(
+                pressure=Ps[ix:],
+                temperature=Ts[ix:],
+                dewpoint=DPs[ix:],
+                parcel_profile=profile,
+            )
+        # Pad these to the full length
+        df["cape"] = np.pad(
+            capes, (0, len(df) - len(capes)), mode="constant", constant_values=np.nan
+        )
+        df["cin"] = np.pad(
+            cins, (0, len(df) - len(cins)), mode="constant", constant_values=np.nan
+        )
+        # df["cin"] = list(cins) + [0] * (len(df) - len(cins))
+        # df["cape"] = list(capes) + [0] * (len(df) - len(capes))
 
     return df
 
