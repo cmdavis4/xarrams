@@ -439,17 +439,27 @@ class TestWK84SoundingAgainstCM1:
             .magnitude
         )
         cm1_df["theta"] = cm1["th"].values
-        vp = mpc.vapor_pressure(
+        # Reconstruct CM1's sounding RH with the same convention RAMS and CM1
+        # use internally: RH = qv / q_sat(P, T), the simple w / w_sat ratio
+        # (CM1 base.F rh0 = qv0 / rslf), not the thermodynamic e / e_sat
+        # humidity. wk84_sounding now stores RH this way, so the comparison is
+        # apples-to-apples. Dewpoint is then derived from that RH exactly as the
+        # generator derives its own (qv -> RH -> dewpoint), keeping both sides on
+        # the same conversion path.
+        cm1_qsat = mpc.saturation_mixing_ratio(
             cm1_df["PS"].values * units("hPa"),
-            cm1["qv"].values * units("kg/kg"),
+            cm1_df["TS"].values * units("degC"),
         )
-        cm1_df["dewpoint"] = mpc.dewpoint(vp).to("degC").magnitude
         cm1_df["RTS"] = (
-            mpc.relative_humidity_from_dewpoint(
+            (cm1["qv"].values * units("kg/kg") / cm1_qsat).to("dimensionless").magnitude
+            * 100.0
+        )
+        cm1_df["dewpoint"] = (
+            mpc.dewpoint_from_relative_humidity(
                 temperature=cm1_df["TS"].values * units("degC"),
-                dewpoint=cm1_df["dewpoint"].values * units("degC"),
+                relative_humidity=cm1_df["RTS"].values * units("percent"),
             )
-            .to("percent")
+            .to("degC")
             .magnitude
         )
 
