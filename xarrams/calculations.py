@@ -194,6 +194,15 @@ def calculate_thermodynamic_variables(
             .pint.dequantify()
         )
 
+    # Calculate dry air density unless it's already there; this is a native output
+    # variable for CM1, so don't want to overwrite it
+    if vars_are_present(["air_density", "RV"]) and not vars_are_present(
+        ["dry_air_density"]
+    ):
+        ds["dry_air_density"] = (
+            ds["air_density"] * units("kg m^-3") / (1 + ds["RV"])
+        ).pint.dequantify()
+
     if vars_are_present(["PCPRR"]):
         ds["PCPRR_mm_hr"] = (
             ((ds["PCPRR"] * units("kg m^-2 s^-1")) / mpconstants.density_water)

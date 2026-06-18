@@ -93,7 +93,7 @@ CM1_TO_RAMS_VARIABLE_NAMES: dict[str, str] = {
     "ncg": "CGP",
     "prs": "P",
     "pi": "PI",
-    "rho": "DN0",
+    "rho": "dry_air_density",
     "rain": "ACCPR",
     "prate": "PCPRR",
 }
