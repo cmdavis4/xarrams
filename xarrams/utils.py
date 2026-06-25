@@ -75,9 +75,9 @@ def to_t_minutes(
     if hasattr(start_time, "to_numpy"):
         start_time = start_time.to_numpy()
     if isinstance(time_values, xr.DataArray):
-        return (time_values - start_time).dt.total_seconds() // 60
+        return (time_values - start_time).dt.total_seconds() / 60
     if isinstance(time_values, np.ndarray):
-        return (time_values - start_time) / np.timedelta64(1, "m") // 1
+        return (time_values - start_time) / np.timedelta64(1, "m") / 1
     return [int((x - start_time) / np.timedelta64(1, "m")) for x in time_values]
 
 
