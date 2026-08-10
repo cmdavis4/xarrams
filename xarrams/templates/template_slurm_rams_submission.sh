@@ -2,6 +2,9 @@
 #SBATCH -A {{account}}
 #SBATCH -p {{queue}}
 #SBATCH -N {{n_nodes}}
+{% if ntasks_per_node -%}
+#SBATCH --ntasks-per-node={{ntasks_per_node}}
+{% endif -%}
 #SBATCH -J {{run_name}}
 #SBATCH -t {{wall_time}}
 #SBATCH --mem=0

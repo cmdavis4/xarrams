@@ -5,6 +5,7 @@ and utilities for writing soundings in RAMS-compatible format.
 """
 
 from __future__ import annotations
+import warnings
 
 import os
 import re
@@ -18,7 +19,7 @@ import numpy as np
 import pandas as pd
 from pint import Quantity
 import xarray as xr
-from tqdm.notebook import tqdm
+from tqdm.auto import tqdm
 
 from carlee_tools.types_carlee_tools import PathLike
 from carlee_tools.plotting import clean_legend, get_nth_color
@@ -28,7 +29,7 @@ from .calculations import calculate_thermodynamic_variables
 from .execution import _parse_ramsin_field
 
 
-def format_sounding_field_ramsin_str(
+def to_ramsin_values_str(
     values: Union[List[float], np.ndarray], decimal_places: int = 4
 ) -> str:
     """Format sounding field values as RAMSIN-compatible string.
@@ -53,6 +54,21 @@ def format_sounding_field_ramsin_str(
     ])
 
 
+def format_sounding_field_ramsin_str(*args, **kwargs):
+    warnings.warn(
+        "format_sounding_field_ramsin_str has been renamed to to_ramsin_values_str. "
+        "format_sounding_field_ramsin_str is deprecated and will be removed eventually;"
+        " use the new name instead.",
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+    return to_ramsin_values_str(*args, **kwargs)
+
+
+def sounding_df_to_ramsin_dict(df):
+    return {k: to_ramsin_values_str(df[k].values) for k in SOUNDING_NAMELIST_VARIABLES}
+
+
 def with_updated_sounding_fields(
     this_param_set: dict[str, str],
     sounding: pd.DataFrame,
@@ -69,14 +85,14 @@ def with_updated_sounding_fields(
     Returns:
         New parameter dictionary with sounding fields replaced.
     """
+    warnings.warn(
+        "with_updated_sounding_fields is deprecated and will be removed eventually. Use"
+        " sounding_df_to_ramsin_dict instead.",
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
     this_param_set = dict(this_param_set)
-    this_param_set.update({
-        "PS": format_sounding_field_ramsin_str(sounding["PS"].values),
-        "TS": format_sounding_field_ramsin_str(sounding["TS"].values),
-        "RTS": format_sounding_field_ramsin_str(sounding["RTS"].values),
-        "US": format_sounding_field_ramsin_str(sounding["US"].values),
-        "VS": format_sounding_field_ramsin_str(sounding["VS"].values),
-    })
+    this_param_set.update(sounding_df_to_ramsin_dict(sounding))
     if update_sounding_field_flags:
         print(
             "Setting pressures to hPa, temps to K, RHs to percent, wind to U and V"
@@ -567,7 +583,7 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
     })
 
 
-def calculate_sounding_derived_vars(df, cape=True):
+def calculate_sounding_derived_vars(df, cape=True, cape_z_max=4000, cape_stride=1):
     df = df.copy()
     df["dewpoint"] = mpc.dewpoint_from_relative_humidity(
         temperature=df["TS"].values * units("degC"),
@@ -599,49 +615,9 @@ def calculate_sounding_derived_vars(df, cape=True):
     Ps = df["PS"].values * units("hPa")
     Ts = df["TS"].values * units("degC")
     DPs = df["dewpoint"].values * units("degC")
-    capes = np.zeros(len(df)) * units("J/kg")
-    cins = np.zeros(len(df)) * units("J/kg")
-    for ix in tqdm(list(range(len(df)))):
-        try:
-            profile = mpc.parcel_profile(
-                pressure=Ps[ix:],
-                temperature=Ts[ix],
-                dewpoint=DPs[ix],
-            )
-        except ValueError as e:
-            print(f"[probe] parcel_profile FAILED at ix={ix} / len(df)={len(df)}")
-            print(f"[probe] len(Ps[ix:]) = {len(Ps[ix:])}")
-            print(f"[probe] Ts[ix] = {Ts[ix]!r}")
-            print(f"[probe] DPs[ix] = {DPs[ix]!r}")
-            print(f"[probe] Ps[ix:] (first 5) = {Ps[ix:][:5]!r}")
-            print(f"[probe] Ps[ix:] (last 5)  = {Ps[ix:][-5:]!r}")
-            # Inspect _parcel_profile_helper shapes directly
-            from metpy.calc.thermo import _parcel_profile_helper
 
-            try:
-                pl, plcl, pu, tl, tlcl, tu = _parcel_profile_helper(
-                    Ps[ix:], Ts[ix], DPs[ix]
-                )
-                print(f"[probe] press_lower.shape = {np.shape(pl)}")
-                print(f"[probe] press_lcl         = {plcl!r}")
-                print(f"[probe] press_upper.shape = {np.shape(pu)}")
-                print(f"[probe] temp_lower.shape  = {np.shape(tl)}")
-                print(f"[probe] temp_lcl          = {tlcl!r}")
-                print(f"[probe] temp_upper.shape  = {np.shape(tu)}  <-- expected 1D")
-                print(f"[probe] temp_upper        = {tu!r}")
-            except Exception as inner:
-                print(f"[probe] helper itself raised: {inner!r}")
-            raise
-        capes[ix], cins[ix] = mpc.cape_cin(
-            pressure=Ps[ix:],
-            temperature=Ts[ix:],
-            dewpoint=DPs[ix:],
-            parcel_profile=profile,
-        )
-    df["cape"] = capes
-    df["cin"] = cins
-    # LCL can accept arrays of values, so we can similarly calculate the LCL
-    # at every starting height, but with a single call
+    # LCL can accept arrays of values, so we calculate the LCL at every starting
+    # height with a single (cheap) vectorized call.
     lcl_ps, _ = mpc.lcl(pressure=Ps, temperature=Ts, dewpoint=DPs)
     # Interpolate the LCL pressure back onto the column's pressure–height
     # relationship to get the LCL height. np.interp needs the sample points
@@ -653,39 +629,48 @@ def calculate_sounding_derived_vars(df, cape=True):
         df["z"].values[::-1],
     )
 
-    # Calculate CAPE for low-levels just bc it's mildly expensive to calculate.
-    # We only vary the *starting* level of the parcel over the low levels, but
-    # the CAPE/CIN integration must extend over the full column above the parcel
-    # (truncating the column truncates the positive area and undercounts CAPE).
+    # CAPE/CIN profile. This is the expensive part: metpy's parcel_profile is a
+    # per-level moist-adiabat integration, and we run one per *starting* level.
+    #
+    # We only vary the starting level of the parcel over the low levels (the
+    # CAPE/CIN integration itself always extends over the full column above the
+    # parcel — truncating the column truncates the positive area and undercounts
+    # CAPE). `cape_stride` further subsamples the starting levels and linearly
+    # interpolates between them, which is plenty for diagnostic plots when the
+    # sounding is at fine (e.g. 10 m) vertical resolution.
+    #   cape=True  -> compute over starting levels with z <= cape_z_max
+    #   cape=False -> compute over the full column
     if cape:
-        Ps = df["PS"].values * units("hPa")
-        Ts = df["TS"].values * units("degC")
-        DPs = df["dewpoint"].values * units("degC")
+        n_levels = int((df["z"] <= cape_z_max).sum())
+    else:
+        n_levels = len(df)
+    start_ixs = list(range(0, n_levels, cape_stride))
 
-        n_ll = int((df["z"] <= 4000).sum())
-        capes = np.zeros(n_ll) * units("J/kg")
-        cins = np.zeros(n_ll) * units("J/kg")
-        for ix in tqdm(list(range(n_ll))):
-            profile = mpc.parcel_profile(
-                pressure=Ps[ix:],
-                temperature=Ts[ix],
-                dewpoint=DPs[ix],
-            )
-            capes[ix], cins[ix] = mpc.cape_cin(
-                pressure=Ps[ix:],
-                temperature=Ts[ix:],
-                dewpoint=DPs[ix:],
-                parcel_profile=profile,
-            )
-        # Pad these to the full length
-        df["cape"] = np.pad(
-            capes, (0, len(df) - len(capes)), mode="constant", constant_values=np.nan
+    capes = np.full(len(df), np.nan)
+    cins = np.full(len(df), np.nan)
+    for ix in tqdm(start_ixs):
+        profile = mpc.parcel_profile(
+            pressure=Ps[ix:],
+            temperature=Ts[ix],
+            dewpoint=DPs[ix],
         )
-        df["cin"] = np.pad(
-            cins, (0, len(df) - len(cins)), mode="constant", constant_values=np.nan
+        cape_ix, cin_ix = mpc.cape_cin(
+            pressure=Ps[ix:],
+            temperature=Ts[ix:],
+            dewpoint=DPs[ix:],
+            parcel_profile=profile,
         )
-        # df["cin"] = list(cins) + [0] * (len(df) - len(cins))
-        # df["cape"] = list(capes) + [0] * (len(df) - len(capes))
+        capes[ix] = cape_ix.to("J/kg").magnitude
+        cins[ix] = cin_ix.to("J/kg").magnitude
+
+    # Fill in the skipped (strided) starting levels by interpolation.
+    if cape_stride > 1 and len(start_ixs) > 1:
+        filled = np.arange(start_ixs[-1] + 1)
+        capes[: start_ixs[-1] + 1] = np.interp(filled, start_ixs, capes[start_ixs])
+        cins[: start_ixs[-1] + 1] = np.interp(filled, start_ixs, cins[start_ixs])
+
+    df["cape"] = capes * units("J/kg")
+    df["cin"] = cins * units("J/kg")
 
     return df
 

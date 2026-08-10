@@ -66,7 +66,7 @@ from .calculations import (
 
 # --- Soundings ---------------------------------------------------------------
 from .soundings import (
-    format_sounding_field_ramsin_str,
+    to_ramsin_values_str,
     plot_sounding_skewt,
     with_updated_sounding_fields,
     wk84_sounding,
@@ -76,6 +76,8 @@ from .soundings import (
     calculate_sounding_derived_vars,
     plot_sounding_diagnostics,
     plot_base_state_diagnostics,
+    sounding_df_to_ramsin_dict,
+    format_sounding_field_ramsin_str,
 )
 
 # --- Utilities ---------------------------------------------------------------
@@ -127,7 +129,7 @@ __all__ = [
     "calculate_derived_variables",
     "calculate_thermodynamic_variables",
     # Soundings
-    "format_sounding_field_ramsin_str",
+    "to_ramsin_values_str",
     "plot_sounding_skewt",
     "with_updated_sounding_fields",
     "wk84_sounding",
@@ -137,6 +139,8 @@ __all__ = [
     "calculate_sounding_derived_vars",
     "plot_sounding_diagnostics",
     "plot_base_state_diagnostics",
+    "format_sounding_field_ramsin_str",
+    "sounding_df_to_ramsin_dict",
     # Utilities
     "get_z_levels",
     "parse_rams_stdout_walltimes",

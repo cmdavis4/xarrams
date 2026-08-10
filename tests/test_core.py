@@ -193,9 +193,9 @@ class TestTimeFunctions:
 
 class TestFormatSoundingField:
     def test_basic(self):
-        from xarrams import format_sounding_field_ramsin_str
+        from xarrams import to_ramsin_values_str
 
-        result = format_sounding_field_ramsin_str([1.0, 2.0, 3.0])
+        result = to_ramsin_values_str([1.0, 2.0, 3.0])
         assert "1.0000" in result
         assert "2.0000" in result
         assert "3.0000" in result
@@ -450,10 +450,9 @@ class TestWK84SoundingAgainstCM1:
             cm1_df["PS"].values * units("hPa"),
             cm1_df["TS"].values * units("degC"),
         )
-        cm1_df["RTS"] = (
-            (cm1["qv"].values * units("kg/kg") / cm1_qsat).to("dimensionless").magnitude
-            * 100.0
-        )
+        cm1_df["RTS"] = (cm1["qv"].values * units("kg/kg") / cm1_qsat).to(
+            "dimensionless"
+        ).magnitude * 100.0
         cm1_df["dewpoint"] = (
             mpc.dewpoint_from_relative_humidity(
                 temperature=cm1_df["TS"].values * units("degC"),
@@ -465,7 +464,9 @@ class TestWK84SoundingAgainstCM1:
 
         interp = {"z": cm1_df["z"].values}
         for col in ["TS", "theta", "dewpoint", "RTS"]:
-            interp[col] = np.interp(cm1_df["z"].values, gen["z"].values, gen[col].values)
+            interp[col] = np.interp(
+                cm1_df["z"].values, gen["z"].values, gen[col].values
+            )
         gen_interp = pd.DataFrame(interp)
         return gen_interp, cm1_df
 

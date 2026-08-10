@@ -513,6 +513,7 @@ def render_rams_submit(
     account: str,
     modules: Sequence[str],
     mpi_launcher: str,
+    ntasks_per_node: Optional[int] = None,
     prologue: Optional[str] = None,
     template_path: PathLike = _RAMS_SUBMIT_TEMPLATE_PATH,
 ) -> str:
@@ -521,6 +522,13 @@ def render_rams_submit(
     Pure rendering: all machine-specific values must be supplied by the
     caller. Wrappers (e.g. ``ps.templates.render_rams_submit``) can
     resolve them from a local machine config and forward here.
+
+    When *ntasks_per_node* is ``None`` (the default) no ``--ntasks-per-node``
+    directive is emitted, so SLURM/``srun`` spreads the *n_cores* tasks evenly
+    over the *n_nodes* exclusive nodes (one rank per core on a fully packed
+    node). Set it to run fewer ranks per node — e.g. to give each rank more
+    memory — in which case the caller is responsible for keeping *n_cores*
+    consistent (``n_cores == n_nodes * ntasks_per_node``).
 
     Returns the rendered script text; the caller is responsible for
     writing it (or use :func:`write_rams_submit_script`, which handles
@@ -541,6 +549,7 @@ def render_rams_submit(
         run_name=run_name,
         n_nodes=n_nodes,
         n_cores=n_cores,
+        ntasks_per_node=ntasks_per_node,
         wall_time=wall_time,
         rams_executable_path=str(rams_executable_path),
         ramsin_path=str(ramsin_path),

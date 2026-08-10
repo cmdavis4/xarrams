@@ -94,8 +94,12 @@ def with_t_minutes_coord(
     Returns:
         Dataset with a new ``t_minutes`` coordinate.
     """
-    start_time = start_time if start_time is not None else ds["time"].min().values
-    return ds.assign_coords(t_minutes=to_t_minutes(ds["time"], start_time=start_time))
+    start_time = (
+        start_time if start_time is not None else ds["time"].min().values
+    )
+    return ds.assign_coords(
+        t_minutes=to_t_minutes(ds["time"], start_time=start_time)
+    )
 
 
 def parse_rams_stdout_walltimes(
@@ -162,7 +166,9 @@ def _check_rams_run_status(run_dir):
                 with hr_stderr.open("r") as f:
                     contents = f.readline().strip()
                     if contents:
-                        return f"{contents} in {this_hr_dir.relative_to(run_dir)}"
+                        return (
+                            f"{contents} in {this_hr_dir.relative_to(run_dir)}"
+                        )
     return "ok"
 
 
@@ -182,7 +188,9 @@ def check_rams_run_statuses(parent_dir):
 def dt_to_rams_output_str(dt_like):
     if isinstance(dt_like, str):
         return dt_like
-    return dt_to_str(dt_like=dt_like, date_format=RAMS_FILENAME_DT_STRFTIME_FORMAT)
+    return dt_to_str(
+        dt_like=dt_like, date_format=RAMS_FILENAME_DT_STRFTIME_FORMAT
+    )
 
 
 def data_to_head_filename(data_fname_or_path):
@@ -194,7 +202,7 @@ def data_to_head_filename(data_fname_or_path):
 def head_to_data_filename(head_fname_or_path, grid=1):
     if not isinstance(head_fname_or_path, str):
         head_fname_or_path = head_fname_or_path.name
-    return head_fname_or_path[:-9] + f"g{grid}.h5"
+    return head_fname_or_path[:-9] + f"-g{grid}.h5"
 
 
 def dt_to_rams_output_filenames(dt_like, lite=False, grid=1):
