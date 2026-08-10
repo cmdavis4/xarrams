@@ -23,7 +23,6 @@ from carlee_tools.utils import dt_to_str, str_to_dt
 from .constants import (
     CM1_TO_RAMS_VARIABLE_NAMES,
     HEADER_NAME_DIMENSION_DICT,
-    RAMS_ANALYSIS_FILE_DIMENSIONS_DICT,
     RAMS_FILENAME_DT_STRFTIME_FORMAT,
     RAMS_FILENAME_DT_REGEX,
     RAMS_VARIABLES_DF,
@@ -149,7 +148,9 @@ def get_rams_dimension_values(
                     break
             n_levels = int(next(f).strip())
             levels = [float(next(f).strip()) for _ in range(n_levels)]
-            dimension_vals[header_name_dimension_dict[this_header_name]] = levels
+            dimension_vals[header_name_dimension_dict[this_header_name]] = (
+                levels
+            )
             header_name_dimension_dict.pop(this_header_name)
     return dimension_vals
 
@@ -194,7 +195,9 @@ def infer_rams_dimensions(
     from collections import Counter
 
     header_filepath = to_header_filepath(single_time_rams_ds.encoding["source"])
-    dimension_vals = get_rams_dimension_values(header_filepath, grid_number=grid_number)
+    dimension_vals = get_rams_dimension_values(
+        header_filepath, grid_number=grid_number
+    )
 
     known_dims: dict[str, str] = (
         RAMS_VARIABLES_DF.dropna(subset=["dimensions"])
@@ -241,8 +244,8 @@ def infer_rams_dimensions(
         total = sum(counter.values())
         if winner_count != total:
             print(
-                f"Warning: conflicting dim inference for {ds_dim}: {dict(counter)}."
-                f" Using majority winner {winner!r}."
+                f"Warning: conflicting dim inference for {ds_dim}:"
+                f" {dict(counter)}. Using majority winner {winner!r}."
             )
         dim_names_mapping[ds_dim] = winner
 
@@ -284,12 +287,14 @@ def fill_rams_output_dimensions(
         ValueError: If dimension lengths don't match between dataset and header.
     """
     try:
-        ds = ds.rename_dims(dimension_names_mapping).assign_coords(dimension_values)
+        ds = ds.rename_dims(dimension_names_mapping).assign_coords(
+            dimension_values
+        )
     except ValueError:
         print(
             "Mismatch between dimension lengths in dataset and header;\nPassed"
-            f" dimension dict: {dimension_names_mapping}\nDimension sizes in dataset:"
-            f" {ds.dims}\nDimension lengths from header:"
+            f" dimension dict: {dimension_names_mapping}\nDimension sizes in"
+            f" dataset: {ds.dims}\nDimension lengths from header:"
             f" { {k: len(v) for k, v in dimension_values.items()} }"
         )
         raise
@@ -321,8 +326,9 @@ def read_rams_output(
     Args:
         input_filenames: Paths to RAMS ``.h5`` output files.
         fill_dim_names: Whether to rename phony dimensions to real names.
-        dim_names: Explicit dimension name mapping. If ``None``, inferred
-            automatically for analysis files or from the header for lite files.
+        dim_names: Explicit dimension name mapping. If ``None``, the phony-dim
+            mapping is inferred per-file via ``infer_rams_dimensions`` (vote-based
+            on known variable shapes) for both analysis and lite files.
         keep_unknown_dims: If ``False``, drop variables with unrecognized
             phony dimensions after renaming.
         drop_vars: Variables to exclude. Mutually exclusive with *keep_vars*.
@@ -349,15 +355,18 @@ def read_rams_output(
 
     # Convert to list in case it's a generator
     input_filenames = list(input_filenames)
-    lite = any(Path(x).name.startswith("a-L") for x in input_filenames)
-    if not lite and not dim_names:
-        dim_names = RAMS_ANALYSIS_FILE_DIMENSIONS_DICT
 
     if drop_vars and keep_vars:
         raise ValueError("Cannot pass both drop_vars and keep_vars")
 
-    if not dim_names and not lite:
-        dim_names = RAMS_ANALYSIS_FILE_DIMENSIONS_DICT
+    # When the caller hasn't pinned an explicit phony-dim mapping, leave
+    # ``dim_names`` as None so ``infer_rams_dimensions`` runs per-file. The old
+    # behavior forced a hardcoded positional map (RAMS_ANALYSIS_FILE_DIMENSIONS_DICT)
+    # for analysis (a-A) files, which assumed phony_dim_2 was always the vertical
+    # axis. That assumption breaks whenever surface/canopy/soil variables (e.g.
+    # CAN_RVAP, SFCWATER_DEPTH) introduce a small patch/soil dimension and shift
+    # the phony-dim numbering, mislabeling the length-2 patch dim as ``z``.
+    # Vote-based inference handles this (and the nx == ny ambiguity) correctly.
 
     def maybe_print(x: str) -> None:
         if not silent:
@@ -368,8 +377,8 @@ def read_rams_output(
             import dask  # noqa: F401
         except ImportError:
             print(
-                "dask must be installed to use the `parallel` option; falling back to"
-                " serial"
+                "dask must be installed to use the `parallel` option; falling"
+                " back to serial"
             )
             parallel = False
 
@@ -381,7 +390,8 @@ def read_rams_output(
         )
         if not time:
             raise ValueError(
-                f"File {fpath.name} does not contain a valid timestamp in the filename"
+                f"File {fpath.name} does not contain a valid timestamp in the"
+                " filename"
             )
         input_datetimes.append(time)
 
@@ -423,8 +433,8 @@ def read_rams_output(
 
     if parallel:
         maybe_print(
-            f"Reading and concatenating {len(input_filenames)} individual timestep"
-            " outputs..."
+            f"Reading and concatenating {len(input_filenames)} individual"
+            " timestep outputs..."
         )
         from contextlib import nullcontext
 
@@ -432,22 +442,28 @@ def read_rams_output(
 
         open_ds_context_manager = nullcontext if silent else ProgressBar
         with open_ds_context_manager():
+            default_open_mfdataset_kwargs = {
+                "combine": "nested",
+                "phony_dims": "sort",
+                "engine": "h5netcdf",
+                "parallel": True,
+                "chunks": chunks,
+            }
             ds = xr.open_mfdataset(
                 input_filenames,
                 concat_dim=time_dim_name,
-                combine="nested",
                 preprocess=_sanitized_preprocess,
-                phony_dims="sort",
-                engine="h5netcdf",
                 drop_variables=drop_vars,
-                parallel=True,
-                chunks=chunks,
-                **open_dataset_kwargs,
+                **(default_open_mfdataset_kwargs | open_dataset_kwargs),
             )
     else:
-        maybe_print(f"Reading {len(input_filenames)} individual timestep outputs...")
+        maybe_print(
+            f"Reading {len(input_filenames)} individual timestep outputs..."
+        )
         to_concat: list[xr.Dataset] = []
-        wrapped_to_read = tqdm(input_filenames) if not silent else input_filenames
+        wrapped_to_read = (
+            tqdm(input_filenames) if not silent else input_filenames
+        )
         for ds_path in wrapped_to_read:
             ds = xr.open_dataset(
                 ds_path,
@@ -478,10 +494,13 @@ def read_rams_output(
 
     if units:
         ds = ds.pint.quantify(
-            RAMS_VARIABLES_DF.set_index("name")["units"].to_dict(), unit_registry=ureg
+            RAMS_VARIABLES_DF.set_index("name")["units"].to_dict(),
+            unit_registry=ureg,
         )
 
-    rams_attrs_dicts = RAMS_VARIABLES_DF.set_index("name").to_dict(orient="index")
+    rams_attrs_dicts = RAMS_VARIABLES_DF.set_index("name").to_dict(
+        orient="index"
+    )
     for var in ds.data_vars:
         ds[var] = ds[var].assign_attrs(rams_attrs_dicts.get(var, {}))
 
@@ -559,8 +578,8 @@ def read_cm1_output(
             import dask  # noqa: F401
         except ImportError:
             print(
-                "dask must be installed to use the `parallel` option; falling back to"
-                " serial"
+                "dask must be installed to use the `parallel` option; falling"
+                " back to serial"
             )
             parallel = False
 
@@ -576,30 +595,37 @@ def read_cm1_output(
 
     if parallel:
         maybe_print(
-            f"Reading and concatenating {len(input_filenames)} individual timestep"
-            " outputs..."
+            f"Reading and concatenating {len(input_filenames)} individual"
+            " timestep outputs..."
         )
         from contextlib import nullcontext
 
         from dask.diagnostics import ProgressBar
 
+        base_open_dataset_kwargs = {
+            "parallel": True,
+            "engine": "h5netcdf",
+            "data_vars": "all",
+            "combine": "nested",
+        }
         open_ds_context_manager = nullcontext if silent else ProgressBar
         with open_ds_context_manager():
             ds = xr.open_mfdataset(
                 input_filenames,
                 concat_dim=time_dim_name,
-                combine="nested",
                 preprocess=_sanitized_preprocess,
                 drop_variables=drop_vars,
-                parallel=True,
                 chunks=chunks,
-                engine="h5netcdf",
-                **open_dataset_kwargs,
+                **(base_open_dataset_kwargs | open_dataset_kwargs),
             )
     else:
-        maybe_print(f"Reading {len(input_filenames)} individual timestep outputs...")
+        maybe_print(
+            f"Reading {len(input_filenames)} individual timestep outputs..."
+        )
         to_concat: list[xr.Dataset] = []
-        wrapped_to_read = tqdm(input_filenames) if not silent else input_filenames
+        wrapped_to_read = (
+            tqdm(input_filenames) if not silent else input_filenames
+        )
         for ds_path in wrapped_to_read:
             ds = xr.open_dataset(
                 ds_path,

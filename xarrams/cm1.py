@@ -122,8 +122,20 @@ def coerce_to_ramslike(
     cm1_ds = _calculate_ramslike_derived_variables(cm1_ds)
     # Fix the time coordinate
     start_ts = pd.Timestamp(start_datetime)
-    seconds = np.asarray(cm1_ds[time_dim_name].values, dtype="float64")
-    absolute_times = start_ts + pd.to_timedelta(seconds, unit="s")
+    # The time coordinate may already be a timedelta64 (nanosecond-encoded
+    # elapsed time) or a plain numeric array of elapsed seconds, depending on
+    # how the source was read. Build the offset from the simulation start
+    # according to the actual dtype rather than assuming seconds.
+    time_coordinate_values = cm1_ds[time_dim_name].values
+    if np.issubdtype(time_coordinate_values.dtype, np.timedelta64):
+        # Already an elapsed-time delta; use it directly (don't reinterpret
+        # the nanosecond counts as seconds, which overflows).
+        elapsed_time = pd.to_timedelta(time_coordinate_values)
+    else:
+        # Numeric elapsed seconds; convert to a timedelta with seconds units.
+        elapsed_seconds = np.asarray(time_coordinate_values, dtype="float64")
+        elapsed_time = pd.to_timedelta(elapsed_seconds, unit="s")
+    absolute_times = start_ts + elapsed_time
     cm1_ds = cm1_ds.assign_coords({time_dim_name: absolute_times})
 
     return cm1_ds

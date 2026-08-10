@@ -91,8 +91,9 @@ def calculate_thermodynamic_variables(
 
     if not vars_are_present(needed_vars) and fail_if_missing_vars:
         raise ValueError(
-            "Not all variables needed for thermodynamic calculations are present "
-            f"in dataset and fail_if_missing_vars was True; required: {needed_vars}"
+            "Not all variables needed for thermodynamic calculations are"
+            " present in dataset and fail_if_missing_vars was True; required:"
+            f" {needed_vars}"
         )
 
     # Pull the raw float magnitudes out of the pint scalar constants once.
@@ -124,11 +125,13 @@ def calculate_thermodynamic_variables(
         ds["R_condensate"] = ds["RTP"] - ds["RV"]
 
     if vars_are_present(["P", "RV"]):
-        vp = mpc.vapor_pressure(ds["P"] * units("hPa"), ds["RV"] * units("kg/kg"))
+        vp = mpc.vapor_pressure(
+            ds["P"] * units("hPa"), ds["RV"] * units("kg/kg")
+        )
         ds["dewpoint"] = mpc.dewpoint(vp).pint.to("K").pint.dequantify()
         ds["vapor_pressure"] = vp.pint.to("hPa").pint.dequantify()
 
-    if vars_are_present(["P", "RV"]):
+    if vars_are_present(["P", "T", "dewpoint"]):
         ds["theta_e"] = (
             mpc.equivalent_potential_temperature(
                 pressure=ds["P"] * units("hPa"),
@@ -162,7 +165,9 @@ def calculate_thermodynamic_variables(
         )
 
     if vars_are_present(["THETA", "RV", "R_condensate"]):
-        ds["theta_rho"] = ds["THETA"] * (1 + 0.608 * ds["RV"] - ds["R_condensate"])
+        ds["theta_rho"] = ds["THETA"] * (
+            1 + 0.608 * ds["RV"] - ds["R_condensate"]
+        )
 
     if vars_are_present(["RCP", "RRP"]):
         ds["R_liquid"] = ds["RCP"] + ds["RRP"]
@@ -218,10 +223,16 @@ def calculate_thermodynamic_variables(
 
     # Variables that are calculated using xarray functionality
     if not passed_dataframe:
-        if vars_are_present(["theta_rho"]) and "x" in ds.dims and "y" in ds.dims:
+        if (
+            vars_are_present(["theta_rho"])
+            and "x" in ds.dims
+            and "y" in ds.dims
+        ):
             tr_layer_mean = ds["theta_rho"].mean(["x", "y"])
             ds["buoyancy"] = (
-                mpconstants.g * (ds["theta_rho"] - tr_layer_mean) / tr_layer_mean
+                mpconstants.g
+                * (ds["theta_rho"] - tr_layer_mean)
+                / tr_layer_mean
             ).pint.dequantify()
 
     if passed_dataframe:
@@ -259,8 +270,8 @@ def calculate_derived_variables(storm_ds: xr.Dataset) -> xr.Dataset:
         Dataset with derived variables and preprocessing applied.
     """
     warnings.warn(
-        "calculate_derived_variables is deprecated and will be removed eventually. Use"
-        " postprocess_rams_output instead.",
+        "calculate_derived_variables is deprecated and will be removed"
+        " eventually. Use postprocess_rams_output instead.",
         category=DeprecationWarning,
         stacklevel=2,
     )
@@ -300,7 +311,8 @@ def calculate_bsr_variables(
     if "time" in base_state.coords:
         if "time" in ds.coords:
             ds = ds.assign_coords(
-                t_minutes=(ds["time"] - base_state["time"]).dt.total_seconds() / 60
+                t_minutes=(ds["time"] - base_state["time"]).dt.total_seconds()
+                / 60
             )
         # Then drop it from the base state to avoid confusion
         base_state = base_state.squeeze()
@@ -309,10 +321,32 @@ def calculate_bsr_variables(
     # calculate any (ie just want t_minutes)
     if bsr_variables == []:
         return ds
-    base_state = base_state.mean(["x", "y"])
+    base_state = base_state.sel(z=slice(0, None)).mean(["x", "y"])
     for var in bsr_variables or DEFAULT_BSR_VARIABLES:
         if var in ds.data_vars:
             ds[f"{var}_bsr"] = ds[var] - base_state[var]
+    # Also add LCL height (as a z-coordinate height, not a pressure)
+    try:
+        # Take the base-state surface (lowest model level) thermodynamics
+        bs_surface = base_state.isel(z=0)
+        # Compute the LCL pressure from surface P, T, and dewpoint
+        lcl_pressure, lcl_temp = mpc.lcl(
+            pressure=bs_surface["P"] * units("hPa"),
+            temperature=bs_surface["T"] * units("K"),
+            dewpoint=bs_surface["dewpoint"] * units("K"),
+        )
+        # Interpolate the LCL from pressure onto the height (z) coordinate.
+        # np.interp needs a monotonically increasing x, so reverse the
+        # profile (pressure decreases with height -> increasing when flipped).
+        lcl_height = np.interp(
+            lcl_pressure.to("hPa").magnitude,
+            base_state["P"].values[::-1],
+            base_state["z"].values[::-1],
+        )
+        # Store as a dimensionless scalar DataArray on the dataset
+        ds["lcl"] = ((), float(lcl_height))
+    except Exception as err:
+        print(f"Error calculating LCL, not including: {err}")
     return ds
 
 
@@ -461,17 +495,23 @@ def integrated_dtheta(
 
     rho = (surface_pressure / (R_d * surface_temp)).to("kg/m^3")
     dTheta_dt = (layer_fluxes / (rho * grid_spacing * cp)).to("K/hr")
-    integrated_dTheta = (integrated_layer_flux / (rho * grid_spacing * cp)).to("K")
+    integrated_dTheta = (integrated_layer_flux / (rho * grid_spacing * cp)).to(
+        "K"
+    )
 
     # 2D x-z grids for cross sections — extend several atten lengths in each direction
-    n_z = int(np.ceil((6 * z_atten_length / grid_spacing).m_as("dimensionless")))
+    n_z = int(
+        np.ceil((6 * z_atten_length / grid_spacing).m_as("dimensionless"))
+    )
     z_edges = np.arange(n_z + 1) * grid_spacing
     z_centers = 0.5 * (z_edges[:-1] + z_edges[1:])
     ze = z_edges.m_as("m")
     Lz = z_atten_length.m_as("m")
     vert_decay_per_layer = np.exp(-ze[:-1] / Lz) - np.exp(-ze[1:] / Lz)
 
-    n_x_half = int(np.ceil((4 * x_atten_length / grid_spacing).m_as("dimensionless")))
+    n_x_half = int(
+        np.ceil((4 * x_atten_length / grid_spacing).m_as("dimensionless"))
+    )
     x_centers = np.arange(-n_x_half, n_x_half + 1) * grid_spacing
     xc = x_centers.m_as("m")
     Lx = x_atten_length.m_as("m")
@@ -479,7 +519,9 @@ def integrated_dtheta(
 
     # 2D fields: outer product of vert_decay (n_z,) and horiz_gauss (n_x,)
     decay_2d = np.outer(vert_decay_per_layer, horiz_gauss)  # (n_z, n_x)
-    heating_rate_max_2d = (flux_amp * decay_2d / (rho * grid_spacing * cp)).to("K/hr")
+    heating_rate_max_2d = (flux_amp * decay_2d / (rho * grid_spacing * cp)).to(
+        "K/hr"
+    )
     total_dtheta_2d = (
         integrated_column_flux[-1] * decay_2d / (rho * grid_spacing * cp)
     ).to("K")
@@ -635,8 +677,8 @@ def postprocess_simulation_output(
     if calculate_bsr:
         if not base_state_ds:
             print(
-                "No base_state_ds passed to postprocess_rams_output; assuming first"
-                " timestep of rams_ds is the base state"
+                "No base_state_ds passed to postprocess_rams_output; assuming"
+                " first timestep of rams_ds is the base state"
             )
             base_state_ds = ds.isel(time=0)
         ds = calculate_bsr_variables(
