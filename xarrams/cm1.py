@@ -80,7 +80,7 @@ def generate_cm1_namelist(
 def _calculate_ramslike_derived_variables(cm1_ds):
     if all([
         var in cm1_ds.data_vars
-        for var in ["RTP", "RV", "RCP", "RRP", "RPP", "RSP", "RGP"]
+        for var in ["RV", "RCP", "RRP", "RPP", "RSP", "RGP"]
     ]):
         cm1_ds = cm1_ds.copy()
         cm1_ds["RTP"] = (
@@ -112,12 +112,21 @@ def coerce_to_ramslike(
     # Rename dimensions
     cm1_ds = cm1_ds.rename(coercable_dims)
     # Rename data variables
-    cm1_ds = cm1_ds.rename(
-        {k: v for k, v in CM1_TO_RAMS_VARIABLE_NAMES.items() if k in coercable_vars}
-    )
+    cm1_ds = cm1_ds.rename({
+        k: v
+        for k, v in CM1_TO_RAMS_VARIABLE_NAMES.items()
+        if k in coercable_vars
+    })
     # PI differs by a factor of 1004 between RAMS and CM1
     if "PI" in cm1_ds.data_vars:
         cm1_ds["PI"] = cm1_ds["PI"] * 1004.0
+    # CM1 stores pressure (prs -> P) in Pa, but the RAMS-like thermodynamics
+    # chain (and p0) work in hPa. Convert here so any source that provides P
+    # without the Exner PI -- notably Lagrangian parcels, which carry prs but no
+    # Exner -- gets a correctly-scaled temperature. Sources that DO carry PI have
+    # their P recomputed from PI downstream, so this conversion is harmless there.
+    if "P" in cm1_ds.data_vars:
+        cm1_ds["P"] = cm1_ds["P"] / 100.0
     # Calculate other base RAMS variables that we can get directly from these
     cm1_ds = _calculate_ramslike_derived_variables(cm1_ds)
     # Fix the time coordinate
