@@ -11,8 +11,10 @@ from pathlib import Path
 
 import pandas as pd
 import numpy as np
+import xarray as xr
 
 from carlee_tools.types_carlee_tools import PathLike
+from carlee_tools.spacing import is_evenly_spaced, spacing
 
 from .constants import CM1_TO_RAMS_DIM_MAPPINGS, CM1_TO_RAMS_VARIABLE_NAMES
 from .io import CM1_DEFAULT_START_DATETIME
@@ -77,6 +79,67 @@ def generate_cm1_namelist(
     return output_dir
 
 
+def destagger_wind_vars(cm1_ds):
+    cm1_ds = cm1_ds.copy()
+    for wind_var, dim in [("u", "x"), ("v", "y"), ("w", "z")]:
+        # Only destagger the winds if the interpolated winds aren't present
+        if (
+            f"{wind_var.upper()}C" in cm1_ds.data_vars
+            or f"{wind_var}interp" in cm1_ds.data_vars
+        ):
+            print(
+                f"{wind_var}interp or {wind_var.upper()}C already present, not"
+                f" destaggering {wind_var}"
+            )
+            continue
+        scalar_grid_dim = dim + "h"
+        staggered_grid_dim = dim + "f"
+        # Also make sure the staggered wind is present
+        if not (
+            (wind_var in cm1_ds.data_vars)
+            and (scalar_grid_dim in cm1_ds.dims)
+            and (staggered_grid_dim in cm1_ds.dims)
+        ):
+            print(
+                f"Staggered and/or unstaggered {dim} grid not found, not"
+                f" destaggering {wind_var}"
+            )
+            continue
+        #  Wind vars are staggered half a gridpoint to the left of the scalars
+        # For example, x_scalargrid[0] = 125 and x_scalargrid[1] = 375
+        # while x_ugrid[0] = 0, x_ugrid[1] = 250
+        # (This is CM1 and most other models' convention; RAMS is backwards of this)
+        # So uinterp[0] = u[0] + u[1] / 2
+        # Check if the grid spacing is constant for this dimension
+        if is_evenly_spaced(cm1_ds[staggered_grid_dim]):
+            # In this case we're always just interpolating to the midpoint and can do this simply
+            interpolated = (
+                cm1_ds[wind_var].shift({staggered_grid_dim: -1})
+                + cm1_ds[wind_var]
+            ) / 2
+            # Also need to drop the last value, which should be nan after the shift
+            interpolated = interpolated.isel(
+                {staggered_grid_dim: slice(None, -1)}
+            )
+        else:
+            # In this case need to do an actual interpolation
+            interpolated = cm1_ds[wind_var].interp(
+                {staggered_grid_dim: cm1_ds[scalar_grid_dim].values}
+            )
+        # Set the coordinates on the new values correctly
+        # (Should already be correct for the interp branch)
+        interpolated = interpolated.assign_coords(
+            {staggered_grid_dim: cm1_ds[scalar_grid_dim].values}
+        )
+        # Drop the existing wind var
+        cm1_ds = cm1_ds.drop_vars(wind_var)
+        # Recreate it with these values and on the scalar grid
+        cm1_ds[f"{wind_var}interp"] = interpolated.rename(
+            {staggered_grid_dim: scalar_grid_dim}
+        )
+    return cm1_ds
+
+
 def _calculate_ramslike_derived_variables(cm1_ds):
     if all([
         var in cm1_ds.data_vars
@@ -100,7 +163,9 @@ def coerce_to_ramslike(
     time_dim_name="time",
     keep_non_coercable=False,
 ):
-    # First limit to the variables we can map directly, and that are present
+    # First destagger winds if we only have the staggered winds present
+    cm1_ds = destagger_wind_vars(cm1_ds)
+    # Limit to the variables we can map directly, and that are present
     coercable_vars = [
         x for x in CM1_TO_RAMS_VARIABLE_NAMES.keys() if x in cm1_ds.data_vars
     ]
