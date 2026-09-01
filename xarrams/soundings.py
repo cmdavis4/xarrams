@@ -592,14 +592,14 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
         )
 
     # --- Assemble the output DataFrame in to_sounding_df's column layout ----
+    # Report RH in the same convention the rest of this module stores it in --
+    # the plain ratio w / w_sat -- which is exactly what the IRTSFLG=3 branch
+    # above inverts, and what calculate_sounding_derived_vars reads back.
+    # metpy's relative_humidity_from_mixing_ratio would return the
+    # thermodynamic e / e_sat instead, which round-trips against neither.
     relative_humidity_percent = (
-        mpc.relative_humidity_from_mixing_ratio(
-            pressure=pressure_pa * units("Pa"),
-            temperature=temperature_k * units("K"),
-            mixing_ratio=mixing_ratio_kgkg * units("dimensionless"),
-        )
-        .to("dimensionless")
-        .magnitude
+        mixing_ratio_kgkg
+        / saturation_mixing_ratio(pressure_pa, temperature_k)
         * 100.0  # frac -> percent
     )
     return pd.DataFrame({
@@ -614,15 +614,30 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
 
 def calculate_sounding_derived_vars(df, cape=True, cape_z_max=4000, cape_stride=1):
     df = df.copy()
-    df["dewpoint"] = mpc.dewpoint_from_relative_humidity(
-        temperature=df["TS"].values * units("degC"),
-        relative_humidity=df["RTS"].values * units("percent"),
-    ).to("degC")
-    df["q_v"] = mpc.mixing_ratio_from_relative_humidity(
-        pressure=df["PS"].values * units("hPa"),
-        temperature=df["TS"].values * units("degC"),
-        relative_humidity=df["RTS"].values * units("percent"),
+    # `RTS` is stored in the CM1/RAMS sense -- the plain mixing-ratio ratio
+    # w / w_sat -- because that is how both models recover qv from a sounding
+    # (CM1 base.F: rh0 = qv0 / rslf), and that is what wk84_sounding writes.
+    # metpy's mixing_ratio_from_relative_humidity instead treats its RH argument
+    # as the thermodynamic e / e_sat, so feeding RTS to it does *not* invert what
+    # was written: it returns a qv ~1.8% low at the surface and tilts the
+    # well-mixed layer that the q_v0 cap exists to make flat. Recover qv with the
+    # same convention it was stored in.
+    Ps_for_qv = df["PS"].values * units("hPa")
+    Ts_for_qv = df["TS"].values * units("degC")
+    rh_ratio = (df["RTS"].values * units("percent")).to("dimensionless")
+    df["q_v"] = (
+        rh_ratio
+        * mpc.saturation_mixing_ratio(
+            total_press=Ps_for_qv, temperature=Ts_for_qv
+        )
     ).to("g/kg")
+    # Take the dewpoint from that same qv (through its vapor pressure) rather
+    # than from RTS directly, so the dewpoint-derived diagnostics below (LCL,
+    # theta_e, CAPE/CIN) sit on the same moisture profile that is written to the
+    # model, instead of on a second, slightly different one.
+    df["dewpoint"] = mpc.dewpoint(
+        mpc.vapor_pressure(Ps_for_qv, df["q_v"].values * units("g/kg"))
+    ).to("degC")
     df["theta"] = mpc.potential_temperature(
         pressure=df["PS"].values * units("hPa"),
         temperature=df["TS"].values * units("degC"),
