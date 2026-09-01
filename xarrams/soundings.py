@@ -12,6 +12,7 @@ import re
 from typing import Optional, Union, List
 
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 import metpy.calc as mpc
 import metpy.constants as mpconstants
 from metpy.units import units
@@ -149,7 +150,7 @@ def write_rams_formatted_sounding(
 def plot_sounding_skewt(
     column_df: pd.DataFrame,
     barbs: bool = True,
-    mixing_ratios=[11e-3, 12e-3, 13e-3, 14e-3],
+    mixing_ratios=[],
     skew=None,
     ax: Optional[plt.Axes] = None,
     fig: Optional[plt.Figure] = None,
@@ -231,23 +232,51 @@ def plot_sounding_skewt(
         h = Hodograph(ax_hod, component_range=component_range)
         h.add_grid(increment=10)
         h.plot_colormapped(column_df["US"], column_df["VS"], column_df["z"])
+        # The inset is a fixed fraction of the skew-T panel's size regardless of
+        # how large that panel is, so its tick labels need their own small,
+        # absolute size rather than inheriting the ambient (possibly
+        # slide-scaled) rcParams tick size, which overlaps at this footprint.
+        ax_hod.tick_params(axis="both", labelsize=8)
 
     # Add lines of constant mixing ratio
-    skewt.plot_mixing_lines(
-        mixing_ratio=np.array(mixing_ratios) if mixing_ratios else mixing_ratios
-    )
+    if mixing_ratios:
+        skewt.plot_mixing_lines(
+            mixing_ratio=np.array(mixing_ratios)
+        )
 
-    # Dual-label y-axis with pressure and height
-    p_ticks = skewt.ax.get_yticks()
-    z_at_ticks = np.interp(p_ticks, column_df["PS"][::-1], column_df["z"][::-1])
-    new_labels = []
-    for p, z in zip(p_ticks, z_at_ticks):
-        height_str = f"{z / 1000:.1f}km" if z >= 1000 else f"{int(z)}m"
-        new_labels.append(f"{int(p)} hPa · {height_str}")
-    skewt.ax.set_yticklabels(new_labels, fontsize=8)
-    skewt.ax.tick_params(axis="x", labelsize=8)
+    # Dual-label y-axis with pressure and height. Deliberately relabels the
+    # existing tick positions (via set_yticklabels alone, not set_yticks first)
+    # rather than pinning them to a FixedLocator — the pressure axis is
+    # log-scaled, and constrained_layout can still revise its view limits after
+    # this point; pinning ticks here left minor-tick autoscaling solving against
+    # a stale range and raising a log-domain math error at draw time.
+    pressure_tick_locations = skewt.ax.get_yticks()
+    height_at_pressure_ticks_m = np.interp(
+        pressure_tick_locations, column_df["PS"][::-1], column_df["z"][::-1]
+    )
+    dual_axis_tick_labels = []
+    for pressure_hpa, height_m in zip(pressure_tick_locations, height_at_pressure_ticks_m):
+        height_str = f"{height_m / 1000:.1f}km" if height_m >= 1000 else f"{int(height_m)}m"
+        dual_axis_tick_labels.append(f"{int(pressure_hpa)} hPa · {height_str}")
+    # These combined "pressure · height" labels are long and, on the log-scaled
+    # pressure axis, pack tightly together toward the surface (equal hPa steps
+    # span shrinking log-distance at higher pressure) — so they need a smaller
+    # font than the ambient tick size to stay legible, scaled off that ambient
+    # size (which may be a named size like "medium", hence resolving it through
+    # FontProperties) rather than a fixed absolute value, so this still tracks
+    # whatever matplotlib style is active.
+    ambient_ytick_fontsize = font_manager.FontProperties(
+        size=plt.rcParams["ytick.labelsize"]
+    ).get_size_in_points()
+    dual_axis_tick_fontsize = max(9, 0.6 * ambient_ytick_fontsize)
+    skewt.ax.set_yticklabels(dual_axis_tick_labels, fontsize=dual_axis_tick_fontsize)
     skewt.ax.xaxis.set_major_locator(plt.MultipleLocator(10))
     skewt.ax.xaxis.set_minor_locator(plt.MultipleLocator(5))
+    # 10 degC-spaced major ticks across a -40..50 range are the standard skew-T
+    # convention and pack tightly at the ambient tick size regardless of panel
+    # width; shrink to match the y-axis dual-label size above so the two axes
+    # read as one consistent (smaller-than-ambient) scale for this panel.
+    skewt.ax.tick_params(axis="x", labelsize=dual_axis_tick_fontsize)
     skewt.ax.grid(which="minor", axis="x", alpha=0.3)
 
     return fig
@@ -901,80 +930,141 @@ def wk84_sounding(
 
 
 def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000, axs=None):
-    # Skew-T
+    """Plot a 2x2 sounding summary: skew-T, theta/lapse rate, CAPE/CIN, moisture.
+
+    The three non-skew-T panels share a height (z) vertical axis and are clipped
+    to `ll_z_cutoff` — the low levels are what these particular diagnostics (BL
+    theta structure, low-level CAPE/CIN, low-level moisture) are for, and a full
+    tropospheric depth would squeeze that detail into a thin sliver. The skew-T
+    keeps its native pressure/temperature axes and always shows the full column;
+    it gets a secondary height label on its y-ticks from `plot_sounding_skewt`.
+
+    A horizontal dotted line marks the surface parcel's LCL on every panel —
+    pressure-valued on the skew-T since that is its native coordinate,
+    height-valued on the other three — so the same physical level lines up
+    across panels despite the differing y-axis quantities.
+
+    Args:
+        sounding_df: DataFrame from `to_sounding_df` and
+            `calculate_sounding_derived_vars`, with at least `z`, `PS`, `theta`,
+            `theta_v`, `theta_lapse_rate`, `cape`, `cin`, `q_v`, `RTS`, and `lcl`.
+        ll_z_cutoff: Height (m) above which the three height-axis panels are
+            clipped. Pass `None` to show the full column on every panel.
+        axs: Optional pre-built 2x2 array of Axes (e.g. a slice of a larger
+            `plt.subplots` grid) to draw into, for composing this as one block
+            of a bigger figure. If omitted, a new figure is created.
+
+    Returns:
+        The matplotlib Figure containing the four panels.
+    """
     if axs is None:
-        fig, axs = plt.subplots(ncols=2, nrows=2, figsize=(6, 6), layout="constrained")
+        fig, axs = plt.subplots(ncols=2, nrows=2, figsize=(9, 9), layout="constrained")
     else:
         axs = np.asarray(axs).reshape(2, 2)
         fig = axs[0, 0].figure
-    ax = axs[0, 0]
-    skewt = plot_sounding_skewt(sounding_df, ax=ax, barbs=False)
-    # skewt.ax.set_title("Skew-T")
+
+    # Skew-T (unaffected by ll_z_cutoff; always the full column). Despite the
+    # name, plot_sounding_skewt returns the parent Figure, not a SkewT object —
+    # its component axes (the SkewX plot itself, plus the hodograph/wind-barb
+    # inset) are recovered below via is_skewt() filtering skewt_fig.axes.
+    skewt_fig = plot_sounding_skewt(sounding_df, ax=axs[0, 0], barbs=False)
+    skewt_ax = next(a for a in skewt_fig.axes if is_skewt(a))
+    skewt_ax.set_title("Skew-T")
 
     if ll_z_cutoff:
-        ll_df = sounding_df.loc[sounding_df["z"] <= ll_z_cutoff]
+        low_level_df = sounding_df.loc[sounding_df["z"] <= ll_z_cutoff]
     else:
-        ll_df = sounding_df
+        low_level_df = sounding_df
 
-    # Potential temperatures
-    ax = axs[0, 1]
-    theta_labels = {"theta": r"$\theta$", "theta_v": r"$\theta_v$"}
-    for var, label in theta_labels.items():
-        ax.plot(ll_df[var].values, ll_df["z"], label=label)
-    ax.set_ylabel("z (m)")
-    ax.set_xlabel("K")
-    # Also lapse rate
-    lr_ax = ax.twiny()
-    (lr_line,) = lr_ax.plot(
-        ll_df["theta_lapse_rate"].values,
-        ll_df["z"],
+    # Potential temperature profiles, with lapse rate on a shared-y twin axis
+    theta_ax = axs[0, 1]
+    theta_ax.set_title("Potential temperature")
+    theta_var_labels = {"theta": r"$\theta$", "theta_v": r"$\theta_v$", "theta_e": r"$\theta_e$"}
+    for column_name, legend_label in theta_var_labels.items():
+        theta_ax.plot(
+            low_level_df[column_name].values, low_level_df["z"], label=legend_label
+        )
+    theta_ax.set_ylabel("z (m)")
+    theta_ax.set_xlabel("K")
+    # The raw finite-difference lapse rate is noisy at native (near-1s) sonde
+    # resolution, so it's drawn thin and faint — a background-texture reference
+    # rather than a headline series that would otherwise dominate the panel.
+    lapse_rate_ax = theta_ax.twiny()
+    (lapse_rate_line,) = lapse_rate_ax.plot(
+        low_level_df["theta_lapse_rate"].values,
+        low_level_df["z"],
         linestyle="dashed",
+        linewidth=1.0,
+        alpha=0.5,
         color="grey",
         label="lapse rate",
     )
-    lr_ax.set_xlabel(r"$\Delta$K/km", color="grey")
-    lr_ax.tick_params(axis="x", colors="grey")
-    handles, labels = ax.get_legend_handles_labels()
-    ax.legend(
-        handles=handles + [lr_line], labels=labels + ["lapse rate"], frameon=False
-    )
+    lapse_rate_ax.set_xlabel(r"$\Delta$K/km", color="grey")
+    lapse_rate_ax.tick_params(axis="x", colors="grey")
 
     # CAPE/CIN
-    ax = axs[1, 0]
-    for var in ["cape", "cin"]:
-        ax.plot(ll_df[var].values, ll_df["z"], label=var)
-    ax.set_ylabel("z (m)")
-    ax.set_xlabel("J/kg")
-    ax.set_title("CAPE/CIN")
-    clean_legend(ax, frameon=False)
+    cape_ax = axs[1, 0]
+    for column_name in ["cape", "cin"]:
+        cape_ax.plot(low_level_df[column_name].values, low_level_df["z"], label=column_name)
+    cape_ax.set_ylabel("z (m)")
+    cape_ax.set_xlabel("J/kg")
+    cape_ax.set_title("CAPE/CIN")
+    clean_legend(cape_ax, frameon=False)
 
-    # Moisture
-    ax = axs[1, 1]
-    ax.set_title("Moisture")
+    # Moisture: q_v and RH on a shared-y twin axis, color-coded onto the axis
+    # labels/ticks instead of a legend box, matching the theta_v/theta contrast.
+    moisture_ax = axs[1, 1]
+    moisture_ax.set_title("Moisture")
     qv_color, rh_color = get_nth_color(0), get_nth_color(1)
-    (qv_line,) = ax.plot(ll_df["q_v"], ll_df["z"], color=qv_color, label=r"$q_v$")
-    ax.set_ylabel("z (m)")
-    ax.set_xlabel(r"$q_v$ (g/kg)", color=qv_color)
-    ax.tick_params(axis="x", colors=qv_color)
-    rh_ax = ax.twiny()
-    rh_ax.plot(ll_df["RTS"], ll_df["z"], color=rh_color, label="RH")
+    moisture_ax.plot(low_level_df["q_v"], low_level_df["z"], color=qv_color, label=r"$q_v$")
+    moisture_ax.set_ylabel("z (m)")
+    moisture_ax.set_xlabel(r"$q_v$ (g/kg)", color=qv_color)
+    moisture_ax.tick_params(axis="x", colors=qv_color)
+    rh_ax = moisture_ax.twiny()
+    rh_ax.plot(low_level_df["RTS"], low_level_df["z"], color=rh_color, label="RH")
     rh_ax.set_xlabel("RH (%)", color=rh_color)
     rh_ax.tick_params(axis="x", colors=rh_color)
 
-    for non_skewt_ax in [axs[0, 1], lr_ax, axs[1, 0], axs[1, 1], rh_ax]:
+    for non_skewt_ax in [theta_ax, lapse_rate_ax, cape_ax, moisture_ax, rh_ax]:
         non_skewt_ax.minorticks_on()
         non_skewt_ax.grid(which="major", alpha=0.4)
         non_skewt_ax.grid(which="minor", alpha=0.15)
 
-    # Add surface parcel LCL to all panels (pressure on skew-T, height on others)
-    z_lcl = sounding_df.iloc[0]["lcl"]
-    p_lcl = np.interp(z_lcl, sounding_df["z"].values, sounding_df["PS"].values)
-    for ax in skewt.axes:
-        if is_skewt(ax):
-            ax.axhline(p_lcl, linestyle="dotted", color="skyblue", alpha=0.6)
+    # Surface parcel's LCL, marked on every panel: pressure-valued on the skew-T
+    # (its native vertical coordinate), height-valued on the other three.
+    lcl_height_m = sounding_df.iloc[0]["lcl"]
+    lcl_pressure_hpa = np.interp(
+        lcl_height_m, sounding_df["z"].values, sounding_df["PS"].values
+    )
+    skewt_ax.axhline(lcl_pressure_hpa, linestyle="dotted", color="skyblue", alpha=0.6)
+    for height_axis_ax in [theta_ax, cape_ax, moisture_ax]:
+        height_axis_ax.axhline(lcl_height_m, linestyle="dotted", color="skyblue", alpha=0.6)
+    # Zero-length proxy artist so "LCL" appears in the theta panel's legend below
+    # (the only panel with a full legend box, since moisture uses colored labels
+    # instead and CAPE/CIN's legend is built separately via clean_legend).
+    theta_ax.plot([], [], linestyle="dotted", color="skyblue", alpha=0.6, label="LCL")
 
-    for ax in axs.flatten()[1:]:
-        ax.axhline(z_lcl, linestyle="dotted", color="skyblue", alpha=0.6)
+    # The lapse-rate scatter on the twinned axis covers nearly the full height
+    # and width of this panel, so "best" placement (which only weighs theta_ax's
+    # own artists, not that scatter) can land the legend on top of data. Low-z is
+    # always low-theta (theta increases with height), so the lower-right corner
+    # is reliably data-free — but only if the legend box is kept short, hence
+    # the reduced font and tightened spacing below (an ambient slide-scaled
+    # legend.fontsize would make a 4-row box tall enough to reach back up into
+    # the theta/theta_v curves).
+    ambient_legend_fontsize = font_manager.FontProperties(
+        size=plt.rcParams["legend.fontsize"]
+    ).get_size_in_points()
+    theta_legend_handles, theta_legend_labels = theta_ax.get_legend_handles_labels()
+    theta_ax.legend(
+        handles=theta_legend_handles + [lapse_rate_line],
+        labels=theta_legend_labels + ["lapse rate"],
+        loc="lower right",
+        fontsize=max(9, 0.65 * ambient_legend_fontsize),
+        handlelength=1.5,
+        labelspacing=0.3,
+        frameon=False,
+    )
 
     return fig
 
@@ -993,7 +1083,7 @@ def plot_base_state_diagnostics(bs_ds):
     lcl = bs_df.iloc[0]["lcl"]
 
     # Always do sounding diagnostics
-    fig, axs = plt.subplots(ncols=2, nrows=3, figsize=(7, 10), layout="constrained")
+    fig, axs = plt.subplots(ncols=2, nrows=3, figsize=(9, 13), layout="constrained")
     plot_sounding_diagnostics(bs_df, axs=axs[:2, :])
 
     # Do CCN if present
