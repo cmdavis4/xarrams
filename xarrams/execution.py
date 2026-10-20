@@ -517,7 +517,9 @@ def _initial_run_end_datetime(ramsin_text: str) -> _dt.datetime:
 # RAMS build links (~/rams_build/install/hdf5-1.14.6, via an rpath). Exported
 # as HDF5_PLUGIN_PATH in submit scripts. An older RAMS build linked to the
 # system HDF5 1.10.7 needs "$HOME/rams_build/install/h5z_zfp/plugin" instead.
-_DEFAULT_RAMS_HDF5_PLUGIN_PATH = "$HOME/rams_build/install/h5z_zfp-hdf5-1.14.6/plugin"
+_DEFAULT_RAMS_HDF5_PLUGIN_PATH = (
+    "$HOME/rams_build/install/h5z_zfp-hdf5-1.14.6/plugin"
+)
 
 # ROMIO hints written into each RAMS submit script and exported as ROMIO_HINTS.
 # romio_cb_write=enable forces collective buffering for the parallel HDF5
@@ -725,7 +727,6 @@ def setup_rams_run(
     run_name: str | None = None,
     render_fn: Callable[..., str] = render_rams_submit,
     render_kwargs: dict = {},
-    new_return_signature=True,
 ):
     # Predetermine the paths we'll use
     run_dir = Path(run_dir)
@@ -758,10 +759,7 @@ def setup_rams_run(
             **render_kwargs,
         )
     )
-    if new_return_signature:
-        return ramsin_path, submit_script_path
-    else:
-        return submit_script_path
+    return ramsin_path, submit_script_path
 
 
 def setup_history_restart(
