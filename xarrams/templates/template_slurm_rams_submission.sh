@@ -13,7 +13,9 @@
 #SBATCH --exclusive
 #SBATCH --output=/dev/null
 #SBATCH --error=/dev/null
+#SBATCH --export=NONE
 
+module purge
 {% for m in modules -%}
 module load {{m}}
 {% endfor %}
@@ -46,7 +48,7 @@ HASHES="##############################"
   echo "$HASHES"
   echo "         BEGIN COMMAND"
   echo "$HASHES"
-  echo "{{mpi_launcher}} {{n_cores}} {{rams_executable_path}} -f {{ramsin_path}}"
+  echo "{{mpi_launcher}} {{n_cores}} --export=ALL {{rams_executable_path}} -f {{ramsin_path}}"
   echo "$HASHES"
   echo "          END COMMAND"
   echo "$HASHES"
@@ -65,7 +67,24 @@ HASHES="##############################"
   echo "$HASHES"
 } | tee "$STAMPED_STDOUT" > "$CURRENT_STDOUT"
 
+# HDF5 filter plugins (ZFP); must match the HDF5 the executable links
+export HDF5_PLUGIN_PATH={{hdf5_plugin_path}}
+export OMPI_MCA_io=romio321
+{% if romio_hints %}
+# ROMIO MPI-IO hints for the parallel HDF5 analysis writes.
+# romio_cb_write=enable forces collective buffering: without it ROMIO lets
+# every rank write its own small compressed chunks, and the ranks contend for
+# shared GPFS blocks, which made the analysis writes several times slower.
+ROMIO_HINTS_PATH={{stdout_dir}}/romio_hints.txt
+cat > "$ROMIO_HINTS_PATH" <<'END_ROMIO_HINTS'
+{% for hint_name, hint_value in romio_hints.items() -%}
+{{hint_name}} {{hint_value}}
+{% endfor -%}
+END_ROMIO_HINTS
+export ROMIO_HINTS="$ROMIO_HINTS_PATH"
+{% endif %}
+
 # Run and tee output to both datetime-stamped and current files
-{{mpi_launcher}} {{n_cores}} {{rams_executable_path}} -f {{ramsin_path}} \
+{{mpi_launcher}} {{n_cores}} --export=ALL {{rams_executable_path}} -f {{ramsin_path}} \
   > >(tee -a "$STAMPED_STDOUT" >> "$CURRENT_STDOUT") \
   2> >(tee -a "$STAMPED_STDERR" > "$CURRENT_STDERR")

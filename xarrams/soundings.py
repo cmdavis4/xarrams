@@ -115,6 +115,7 @@ def write_rams_formatted_sounding(
     df: pd.DataFrame,
     output_path: PathLike,
     second_copy: Optional[PathLike] = None,
+    **to_csv_kwargs,
 ) -> None:
     """Write sounding data to a RAMS-formatted CSV file.
 
@@ -144,19 +145,19 @@ def write_rams_formatted_sounding(
 
     # RAMS reads each sounding line with Fortran list-directed I/O, which
     # requires a trailing comma at the end of the line. to_csv has no option
-    # to add a delimiter after the last real column, so an extra blank
-    # column is appended: to_csv still writes a delimiter before it, and the
-    # blank value itself prints as nothing, yielding "...,0.0000,\n".
+    # to add a delimiter after the last real column, and recent pandas
+    # rejects a multi-character line terminator such as ",\n", so an extra
+    # blank column is appended: to_csv still writes a delimiter before it,
+    # and the blank value itself prints as nothing, yielding "...,0.0000,\n".
     sounding_csv_df = df[SOUNDING_NAMELIST_VARIABLES].copy()
     sounding_csv_df["_trailing_comma"] = ""
+    # Defaults RAMS needs, which callers may extend or override
+    output_params = (
+        dict(sep=",", header=False, index=False, float_format="%.4f")
+        | to_csv_kwargs
+    )
     for path in output_paths:
-        sounding_csv_df.to_csv(
-            str(path),
-            sep=",",
-            header=False,
-            index=False,
-            float_format="%.4f",
-        )
+        sounding_csv_df.to_csv(str(path), **output_params)
 
 
 def plot_sounding_skewt(
@@ -413,9 +414,8 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
         DataFrame with columns ``z``, ``PS``, ``TS``, ``RTS``, ``US``, ``VS``.
 
     Raises:
-        NotImplementedError: If ``IPSFLG`` is not 0 (millibar levels). The
-            ``IPSFLG=1`` height-level form needs RAMS' interleaved hydrostatic
-            pressure integration, which is not reproduced here.
+        NotImplementedError: If ``IPSFLG`` is neither 0 (millibar levels) nor
+            1 (height levels with ``PS(1)`` the surface pressure).
         ValueError: If a required sounding flag or array is missing.
     """
     # Accept either a path to a RAMSIN file or the namelist text directly.
@@ -502,12 +502,14 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
         # Pressure given in millibars.
         pressure_pa = pressure_mb * 100.0
     else:
-        # PS holds the surface pressure (mb) then heights (m); the input array
-        # is named *pressure_mb* but here its tail entries are heights.
-        # Slot 0 holds surface *pressure*, so the surface *height* (z=0, as in
-        # the height integration below) must replace it for layer thicknesses.
-        height_levels_m = pressure_mb.copy()
-        height_levels_m[0] = 0.0
+        # PS holds the surface pressure (mb) in its first slot, then heights
+        # (m) for levels 2..N; the input array is named *pressure_mb* but here
+        # its tail entries are heights.  That first entry is *not* also a
+        # height: arrsnd anchors the integration at the ground with
+        # ``zold2 = 0.`` before stepping through PS(2:), so the first layer's
+        # thickness is PS(2), not PS(2) - PS(1).
+        surface_pressure_mb = pressure_mb[0]
+        height_levels_m = np.concatenate(([0.0], pressure_mb[1:]))
         # Virtual-temperature correction factor for the integration. RAMS only
         # applies it when moisture is supplied as a mixing ratio (IRTSFLG=2);
         # *moisture_in* is then in g/kg, hence the 1e-3.
@@ -520,7 +522,7 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
         temperature_offset = 273.15 if temperature_flag == 0 else 0.0
 
         pressure_pa = np.zeros(n_levels)
-        pressure_pa[0] = pressure_mb[0] * 100.0  # surface pressure mb -> Pa
+        pressure_pa[0] = surface_pressure_mb * 100.0  # mb -> Pa
         for k in range(1, n_levels):
             # Layer thickness between successive input height levels.
             layer_thickness_m = height_levels_m[k] - height_levels_m[k - 1]
