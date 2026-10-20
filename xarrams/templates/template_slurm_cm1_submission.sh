@@ -10,7 +10,9 @@
 #SBATCH --exclusive
 #SBATCH --output=/dev/null
 #SBATCH --error=/dev/null
+#SBATCH --export=NONE
 
+module purge
 {% for m in modules -%}
 module load {{m}}
 {% endfor %}
@@ -47,7 +49,7 @@ HASHES="##############################"
   echo "$HASHES"
   echo "         BEGIN COMMAND"
   echo "$HASHES"
-  echo "{{mpi_launcher}} {{n_cores}} ./cm1.exe"
+  echo "{{mpi_launcher}} {{n_cores}} --export=ALL ./cm1.exe"
   echo "$HASHES"
   echo "          END COMMAND"
   echo "$HASHES"
@@ -71,6 +73,6 @@ export OMPI_MCA_io=romio321
 # disable HCOLL (fixes the MPI_Comm_dup crash)
 export OMPI_MCA_coll_hcoll_enable=0
 # Run and tee output to both datetime-stamped and current files
-{{mpi_launcher}} {{n_cores}} ./cm1.exe \
+{{mpi_launcher}} {{n_cores}} --export=ALL ./cm1.exe \
   > >(tee -a "$STAMPED_STDOUT" >> "$CURRENT_STDOUT") \
   2> >(tee -a "$STAMPED_STDERR" > "$CURRENT_STDERR")

@@ -12,7 +12,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Callable, Optional, Sequence, Union
+from typing import Callable, Mapping, Optional, Sequence, Union
 
 import jinja2
 from pandas import Timestamp, Timedelta
@@ -174,7 +174,9 @@ def _generate_ramsin_text(
             flags=re.MULTILINE | re.DOTALL,
         )
         if n_subs == 0:
-            raise ValueError(f"Field {parameter_name} not found in template RAMSIN")
+            raise ValueError(
+                f"Field {parameter_name} not found in template RAMSIN"
+            )
 
     return ramsin
 
@@ -229,14 +231,20 @@ def run_rams(
     # cwd is what relative paths in the RAMSIN and on the command line resolve
     # against. Defaults to the RAMSIN's parent directory (which is the run
     # dir under the standard layout written by generate_ramsin).
-    cwd = Path(cwd).resolve() if cwd is not None else Path(ramsin_path).resolve().parent
+    cwd = (
+        Path(cwd).resolve()
+        if cwd is not None
+        else Path(ramsin_path).resolve().parent
+    )
     # Resolve relative file paths against cwd for Python-side reads. The
     # command line still passes the original (possibly relative) form so the
     # subprocess sees paths the way they're written in the user's submit.
     ramsin_path_abs = (cwd / ramsin_path).resolve()
 
     if len(str(ramsin_path_abs)) > 256:
-        raise ValueError("RAMS cannot handle ramsin paths longer than 256 characters")
+        raise ValueError(
+            "RAMS cannot handle ramsin paths longer than 256 characters"
+        )
 
     rams_executable_path = str(Path(rams_executable_path).resolve())
 
@@ -263,7 +271,9 @@ def run_rams(
             rams_checksum = hashlib.md5(rams_exe_f.read()).hexdigest()
         with Path(stdout_path).open(write_mode) as stdout_f:
             hashes = "#" * 47
-            stdout_f.write(f"{hashes}\nRAMS CHECKSUM: {rams_checksum}\n{hashes}\n\n")
+            stdout_f.write(
+                f"{hashes}\nRAMS CHECKSUM: {rams_checksum}\n{hashes}\n\n"
+            )
             stdout_f.write(
                 "##############################\n         BEGIN"
                 " COMMAND\n##############################\n"
@@ -298,7 +308,10 @@ def run_rams(
     with Path(stdout_path).open(write_mode) as stdout_f:
         if asynchronous:
             return subprocess.Popen(
-                command.split(" "), stdout=stdout_f, start_new_session=True, cwd=cwd
+                command.split(" "),
+                stdout=stdout_f,
+                start_new_session=True,
+                cwd=cwd,
             )
         else:
             return subprocess.run(command.split(" "), stdout=stdout_f, cwd=cwd)
@@ -500,6 +513,24 @@ def _initial_run_end_datetime(ramsin_text: str) -> _dt.datetime:
 #     )
 
 
+# H5Z-ZFP plugin directory built against the HDF5 1.14.6 that the standard
+# RAMS build links (~/rams_build/install/hdf5-1.14.6, via an rpath). Exported
+# as HDF5_PLUGIN_PATH in submit scripts. An older RAMS build linked to the
+# system HDF5 1.10.7 needs "$HOME/rams_build/install/h5z_zfp/plugin" instead.
+_DEFAULT_RAMS_HDF5_PLUGIN_PATH = "$HOME/rams_build/install/h5z_zfp-hdf5-1.14.6/plugin"
+
+# ROMIO hints written into each RAMS submit script and exported as ROMIO_HINTS.
+# romio_cb_write=enable forces collective buffering for the parallel HDF5
+# analysis writes: a few aggregator ranks gather the compressed chunks and
+# write them in large contiguous blocks. ROMIO's automatic mode declines to
+# aggregate these writes, so every rank writes its own 20-110 KB chunks into
+# shared 4 MB GPFS blocks, and the ranks on different nodes contend for them.
+# Measured at 256 ranks on 2 cirrus nodes (2026-09-23): lite writes 63 s -> 5.5 s
+# and state writes ~80 s -> 16-31 s with the H5Dwrite_multi build; lite writes
+# 63 s -> 32-42 s with the standard HDF5 1.10.7 build. Outputs bit-identical.
+_DEFAULT_RAMS_ROMIO_HINTS = {"romio_cb_write": "enable"}
+
+
 def render_rams_submit(
     *,
     run_name: str,
@@ -515,6 +546,8 @@ def render_rams_submit(
     mpi_launcher: str,
     ntasks_per_node: Optional[int] = None,
     prologue: Optional[str] = None,
+    hdf5_plugin_path: str = _DEFAULT_RAMS_HDF5_PLUGIN_PATH,
+    romio_hints: Optional[Mapping[str, str]] = _DEFAULT_RAMS_ROMIO_HINTS,
     template_path: PathLike = _RAMS_SUBMIT_TEMPLATE_PATH,
 ) -> str:
     """Render a SLURM submission script for a RAMS run.
@@ -529,6 +562,28 @@ def render_rams_submit(
     node). Set it to run fewer ranks per node — e.g. to give each rank more
     memory — in which case the caller is responsible for keeping *n_cores*
     consistent (``n_cores == n_nodes * ntasks_per_node``).
+
+    *hdf5_plugin_path* is exported as ``HDF5_PLUGIN_PATH``, the directory
+    HDF5 searches for dynamically loaded filters such as the H5Z-ZFP lossy
+    compressor. The filter plugin must be built against the same HDF5
+    library the RAMS executable links: a plugin built for a different HDF5
+    version pulls a second copy of the library into the process, and the
+    filter then operates on object ids that belong to the other copy. So a
+    RAMS build linked to a non-default HDF5 must pass the matching plugin
+    directory here. The default is the plugin for HDF5 1.14.6, which the
+    standard RAMS build links.
+
+    *romio_hints* maps ROMIO MPI-IO hint names to values. At job start the
+    script writes them, one ``name value`` pair per line, to
+    ``<stdout_dir>/romio_hints.txt`` and exports that path as
+    ``ROMIO_HINTS``. ROMIO (selected by ``OMPI_MCA_io=romio321`` in the
+    template) reads the file when HDF5 opens each output file, so the hints
+    reach the analysis writes without any change to the RAMS source. The
+    file is written per job, rather than pointing at a shared copy, so the
+    hints that applied to a run stay next to its stdout. The default forces
+    collective buffering (``romio_cb_write enable``), which cut RAMS
+    analysis write times several-fold; see ``_DEFAULT_RAMS_ROMIO_HINTS``.
+    Pass ``None`` or an empty mapping to leave ROMIO on its defaults.
 
     Returns the rendered script text; the caller is responsible for
     writing it (or use :func:`write_rams_submit_script`, which handles
@@ -554,6 +609,8 @@ def render_rams_submit(
         rams_executable_path=str(rams_executable_path),
         ramsin_path=str(ramsin_path),
         stdout_dir=str(stdout_dir),
+        hdf5_plugin_path=hdf5_plugin_path,
+        romio_hints=dict(romio_hints or {}),
     )
 
 
@@ -648,7 +705,11 @@ def write_rams_submit_script(
     submit_path = run_dir / f"submit_slurm.{ramsin_name}.sh"
 
     rendered = render_fn(
-        run_name=run_name if run_name is not None else f"{run_dir.stem}.{ramsin_name}",
+        run_name=(
+            run_name
+            if run_name is not None
+            else f"{run_dir.stem}.{ramsin_name}"
+        ),
         ramsin_path=ramsin_path,
         stdout_dir=stdout_dir,
         **render_kwargs,
@@ -733,7 +794,9 @@ def setup_history_restart(
         f"{_require_ramsin_field(parent_ramsin_text, 'IYEAR1')}-{_require_ramsin_field(parent_ramsin_text, 'IMONTH1')}-{_require_ramsin_field(parent_ramsin_text, 'IDATE1')}"
         f" {_require_ramsin_field(parent_ramsin_text, 'ITIME1')}"
     )
-    timeunit = (_parse_ramsin_field(parent_ramsin_text, "TIMEUNIT") or "h").lower()
+    timeunit = (
+        _parse_ramsin_field(parent_ramsin_text, "TIMEUNIT") or "h"
+    ).lower()
     if timeunit not in _TIMEUNIT_SECONDS:
         raise ValueError(f"Unrecognized TIMEUNIT {timeunit!r}")
     initial_end_time = initial_start_time + Timedelta(initial_timmax, timeunit)
@@ -767,7 +830,9 @@ def setup_history_restart(
             if target_data_path.exists() or target_head_path.exists():
                 print("Seed backup already exists, not copying")
             else:
-                shutil.copy2(str(hfilin_data_path.resolve()), str(seed_dir.resolve()))
+                shutil.copy2(
+                    str(hfilin_data_path.resolve()), str(seed_dir.resolve())
+                )
                 shutil.copy2(str(hfilin.resolve()), str(seed_dir.resolve()))
                 # Set the hfilin to start from these
                 hfilin = (seed_dir / hfilin.name).resolve()
@@ -775,7 +840,9 @@ def setup_history_restart(
     # Generate the file structure and ramsin
     # Don't create input or output directories to avoid confusion, since we're using
     # the parent's
-    build_rams_directory_structure(hr_dir, input=False, output=False, derived=False)
+    build_rams_directory_structure(
+        hr_dir, input=False, output=False, derived=False
+    )
 
     ramsin_parameters = ramsin_parameters | {
         "EXPNME": ramsin_str(
@@ -934,7 +1001,9 @@ def setup_cm1_history_restart(
             )
     parent_namelist_text = parent_namelist_path.read_text()
 
-    restart_format = int(_parse_namelist_field(parent_namelist_text, "restart_format") or 1)
+    restart_format = int(
+        _parse_namelist_field(parent_namelist_text, "restart_format") or 1
+    )
     restart_filetype = int(
         _parse_namelist_field(parent_namelist_text, "restart_filetype") or 2
     )
@@ -946,13 +1015,18 @@ def setup_cm1_history_restart(
         found = {
             n
             for p in output_dir.glob("cm1rst_*")
-            if (n := _cm1_rstnum_from_filename(p.name, restart_format, restart_filetype))
+            if (
+                n := _cm1_rstnum_from_filename(
+                    p.name, restart_format, restart_filetype
+                )
+            )
             is not None
         }
         if not found:
             raise FileNotFoundError(
-                f"No cm1rst_* restart files found in {output_dir} for "
-                f"restart_format={restart_format}, restart_filetype={restart_filetype}."
+                f"No cm1rst_* restart files found in {output_dir} for"
+                f" restart_format={restart_format},"
+                f" restart_filetype={restart_filetype}."
             )
         rstnum = max(found)
         print(f"Defaulting rstnum to latest restart file: {rstnum}")
