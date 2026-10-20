@@ -17,6 +17,12 @@ import pandas as pd
 import xarray as xr
 from tqdm.notebook import tqdm
 
+# Registers the HDF5 compression filters bundled with `hdf5plugin` (ZFP, Blosc, LZ4, ...) with
+# h5py as an import side effect. RAMS lite output can be written with lossy ZFP compression;
+# without this import, h5netcdf cannot decode those variables and fails with
+# "can't open directory (/usr/local/hdf5/lib/plugin)".
+import hdf5plugin  # noqa: F401
+
 from carlee_tools.types_carlee_tools import PathLike, DatetimeLike
 from carlee_tools.time import dt_to_str, str_to_dt
 
@@ -396,8 +402,13 @@ def read_rams_output(
         input_datetimes.append(time)
 
     if keep_vars:
-        print("Determining drop_vars from keep_vars...")
-        present_vars = xr.open_dataset(input_filenames[0]).data_vars
+        maybe_print("Determining drop_vars from keep_vars...")
+        # Open the first file as the reader below does (h5netcdf, sorted phony
+        # dims), only to list its variables.
+        with xr.open_dataset(
+            input_filenames[0], engine="h5netcdf", phony_dims="sort"
+        ) as first_ds:
+            present_vars = list(first_ds.data_vars)
         drop_vars = [x for x in present_vars if x not in keep_vars]
 
     def _sanitized_preprocess(ds: xr.Dataset) -> xr.Dataset:
@@ -472,6 +483,9 @@ def read_rams_output(
                 phony_dims="sort",
                 **open_dataset_kwargs,
             )
+            # Same per-file step as the parallel path: name the dimensions and
+            # attach the header coordinates.
+            ds = _sanitized_preprocess(ds)
             to_concat.append(ds)
         if len(to_concat) > 1:
             if concatenate:
@@ -532,20 +546,16 @@ def read_cm1_output(
     CM1 output already carries a ``time`` dimension (seconds since the start
     of the simulation) and proper spatial coordinates: ``xh``/``yh``/``zh``
     on the scalar grid and ``xf``/``yf``/``zf`` on the flux grid. This
-    function concatenates files along ``time``, converts the raw seconds to
-    absolute datetimes anchored at *start_datetime*, and optionally renames
-    the scalar-grid dims to ``x``/``y``/``z`` to match the convention used
-    by :func:`read_rams_output`. Flux-grid dims are left untouched.
+    function concatenates files along ``time`` and tags each time with its
+    source file. It keeps CM1's names and units: ``time`` stays in seconds
+    and the dimensions keep their CM1 names. :func:`xarrams.cm1.coerce_to_ramslike`
+    converts to RAMS names and absolute datetimes.
 
     Args:
         input_filenames: Paths to CM1 ``cm1out_*.nc`` output files.
-        start_datetime: Absolute datetime corresponding to t=0 in the simulation.
-        rename_dims: If True, rename ``xh``/``yh``/``zh`` → ``x``/``y``/``z``.
         drop_vars: Variables to exclude. Mutually exclusive with *keep_vars*.
         keep_vars: Variables to keep (all others dropped). Mutually exclusive with *drop_vars*.
         preprocess: Callable applied to each single-file dataset before concatenation.
-            Receives the dataset *after* any rename, so callers should refer to
-            ``x``/``y``/``z`` when ``rename_dims=True``.
         time_dim_name: Name of the time dimension in CM1 output.
         parallel: Use dask for parallel reading (requires dask).
         chunks: Chunk specification passed to ``xr.open_mfdataset``.
@@ -585,7 +595,9 @@ def read_cm1_output(
 
     if keep_vars:
         maybe_print("Determining drop_vars from keep_vars...")
-        present_vars = xr.open_dataset(input_filenames[0]).data_vars
+        # Open the first file only to list its variables.
+        with xr.open_dataset(input_filenames[0], engine="h5netcdf") as first_ds:
+            present_vars = list(first_ds.data_vars)
         drop_vars = [x for x in present_vars if x not in keep_vars]
 
     def _sanitized_preprocess(ds: xr.Dataset) -> xr.Dataset:

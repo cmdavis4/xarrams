@@ -57,9 +57,9 @@ def to_ramsin_values_str(
 
 def format_sounding_field_ramsin_str(*args, **kwargs):
     warnings.warn(
-        "format_sounding_field_ramsin_str has been renamed to to_ramsin_values_str. "
-        "format_sounding_field_ramsin_str is deprecated and will be removed eventually;"
-        " use the new name instead.",
+        "format_sounding_field_ramsin_str has been renamed to"
+        " to_ramsin_values_str. format_sounding_field_ramsin_str is deprecated"
+        " and will be removed eventually; use the new name instead.",
         category=DeprecationWarning,
         stacklevel=2,
     )
@@ -67,7 +67,10 @@ def format_sounding_field_ramsin_str(*args, **kwargs):
 
 
 def sounding_df_to_ramsin_dict(df):
-    return {k: to_ramsin_values_str(df[k].values) for k in SOUNDING_NAMELIST_VARIABLES}
+    return {
+        k: to_ramsin_values_str(df[k].values)
+        for k in SOUNDING_NAMELIST_VARIABLES
+    }
 
 
 def with_updated_sounding_fields(
@@ -87,8 +90,8 @@ def with_updated_sounding_fields(
         New parameter dictionary with sounding fields replaced.
     """
     warnings.warn(
-        "with_updated_sounding_fields is deprecated and will be removed eventually. Use"
-        " sounding_df_to_ramsin_dict instead.",
+        "with_updated_sounding_fields is deprecated and will be removed"
+        " eventually. Use sounding_df_to_ramsin_dict instead.",
         category=DeprecationWarning,
         stacklevel=2,
     )
@@ -96,8 +99,8 @@ def with_updated_sounding_fields(
     this_param_set.update(sounding_df_to_ramsin_dict(sounding))
     if update_sounding_field_flags:
         print(
-            "Setting pressures to hPa, temps to K, RHs to percent, wind to U and V"
-            " components"
+            "Setting pressures to hPa, temps to K, RHs to percent, wind to U"
+            " and V components"
         )
         this_param_set.update({
             "IPSFLG": "0",
@@ -126,35 +129,45 @@ def write_rams_formatted_sounding(
     """
     if not all(x in df.columns for x in SOUNDING_NAMELIST_VARIABLES):
         raise ValueError(
-            f"Sounding dataframe must contain columns {SOUNDING_NAMELIST_VARIABLES}"
+            "Sounding dataframe must contain columns"
+            f" {SOUNDING_NAMELIST_VARIABLES}"
         )
     if not (df["PS"].is_monotonic_decreasing and df["PS"].nunique() == len(df)):
         raise ValueError(
-            "'PS' field must be monotonically decreasing with no duplicate values"
+            "'PS' field must be monotonically decreasing with no duplicate"
+            " values"
         )
 
     output_paths = [output_path]
     if second_copy:
         output_paths.append(second_copy)
+
+    # RAMS reads each sounding line with Fortran list-directed I/O, which
+    # requires a trailing comma at the end of the line. to_csv has no option
+    # to add a delimiter after the last real column, so an extra blank
+    # column is appended: to_csv still writes a delimiter before it, and the
+    # blank value itself prints as nothing, yielding "...,0.0000,\n".
+    sounding_csv_df = df[SOUNDING_NAMELIST_VARIABLES].copy()
+    sounding_csv_df["_trailing_comma"] = ""
     for path in output_paths:
-        df[SOUNDING_NAMELIST_VARIABLES].to_csv(
+        sounding_csv_df.to_csv(
             str(path),
             sep=",",
             header=False,
             index=False,
             float_format="%.4f",
-            lineterminator=",\n",
         )
 
 
 def plot_sounding_skewt(
     column_df: pd.DataFrame,
-    barbs: bool = True,
+    wind="barbs",
     mixing_ratios=[],
     skew=None,
     ax: Optional[plt.Axes] = None,
     fig: Optional[plt.Figure] = None,
     subplot_spec=None,
+    extras=True,
 ) -> plt.Figure:
     """Plot a SkewT diagram (with optional hodograph) from a vertical column.
 
@@ -219,14 +232,14 @@ def plot_sounding_skewt(
     )
     skewt.ax.set_xlabel("Temperature (°C)")
 
-    if barbs:
+    if wind == "barbs":
         coarsened = column_df.iloc[::4]
         skewt.plot_barbs(
             pressure=coarsened["PS"] * units("hPa"),
             u=coarsened["US"] * units("m/s"),
             v=coarsened["VS"] * units("m/s"),
         )
-    else:
+    elif wind == "hodograph":
         ax_hod = inset_axes(skewt.ax, "25%", "25%", loc=1)
         component_range = max(column_df["US"].max(), column_df["VS"].max()) + 1
         h = Hodograph(ax_hod, component_range=component_range)
@@ -237,12 +250,12 @@ def plot_sounding_skewt(
         # absolute size rather than inheriting the ambient (possibly
         # slide-scaled) rcParams tick size, which overlaps at this footprint.
         ax_hod.tick_params(axis="both", labelsize=8)
+    else:
+        pass
 
     # Add lines of constant mixing ratio
     if mixing_ratios:
-        skewt.plot_mixing_lines(
-            mixing_ratio=np.array(mixing_ratios)
-        )
+        skewt.plot_mixing_lines(mixing_ratio=np.array(mixing_ratios))
 
     # Dual-label y-axis with pressure and height. Deliberately relabels the
     # existing tick positions (via set_yticklabels alone, not set_yticks first)
@@ -255,8 +268,14 @@ def plot_sounding_skewt(
         pressure_tick_locations, column_df["PS"][::-1], column_df["z"][::-1]
     )
     dual_axis_tick_labels = []
-    for pressure_hpa, height_m in zip(pressure_tick_locations, height_at_pressure_ticks_m):
-        height_str = f"{height_m / 1000:.1f}km" if height_m >= 1000 else f"{int(height_m)}m"
+    for pressure_hpa, height_m in zip(
+        pressure_tick_locations, height_at_pressure_ticks_m
+    ):
+        height_str = (
+            f"{height_m / 1000:.1f}km"
+            if height_m >= 1000
+            else f"{int(height_m)}m"
+        )
         dual_axis_tick_labels.append(f"{int(pressure_hpa)} hPa · {height_str}")
     # These combined "pressure · height" labels are long and, on the log-scaled
     # pressure axis, pack tightly together toward the surface (equal hPa steps
@@ -269,7 +288,9 @@ def plot_sounding_skewt(
         size=plt.rcParams["ytick.labelsize"]
     ).get_size_in_points()
     dual_axis_tick_fontsize = max(9, 0.6 * ambient_ytick_fontsize)
-    skewt.ax.set_yticklabels(dual_axis_tick_labels, fontsize=dual_axis_tick_fontsize)
+    skewt.ax.set_yticklabels(
+        dual_axis_tick_labels, fontsize=dual_axis_tick_fontsize
+    )
     skewt.ax.xaxis.set_major_locator(plt.MultipleLocator(10))
     skewt.ax.xaxis.set_minor_locator(plt.MultipleLocator(5))
     # 10 degC-spaced major ticks across a -40..50 range are the standard skew-T
@@ -278,6 +299,23 @@ def plot_sounding_skewt(
     # read as one consistent (smaller-than-ambient) scale for this panel.
     skewt.ax.tick_params(axis="x", labelsize=dual_axis_tick_fontsize)
     skewt.ax.grid(which="minor", axis="x", alpha=0.3)
+
+    if extras:
+        # Annotate with sbcape and cin
+        cape, cin = mpc.surface_based_cape_cin(
+            column_df["PS"].values * units("hPa"),
+            column_df["TS"].values * units("degC"),
+            column_df["dewpoint"].values * units("degC"),
+        )
+        skewt.ax.text(
+            0.98,
+            0.98,
+            f"SBCAPE: {cape.to('J/kg').magnitude:.0f} J/kg\n"
+            f"SBCIN: {cin.to('J/kg').magnitude:.0f} J/kg",
+            transform=skewt.ax.transAxes,
+            ha="right",
+            va="top",
+        )
 
     return fig
 
@@ -292,8 +330,8 @@ def to_sounding_df(ds):
     if ("time" in ds.dims) or ("time" in ds.coords):
         if ds["time"].size > 1:
             raise ValueError(
-                "ds cannot have a time dimension with more than one value, to avoid"
-                " confusion"
+                "ds cannot have a time dimension with more than one value, to"
+                " avoid confusion"
             )
     # If it has x and y, take the mean over them
     mean_vars = [x for x in ds.dims if x in ["x", "y"]]
@@ -402,10 +440,16 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
             return default
         return int(raw_flag)
 
-    pressure_flag = read_flag("IPSFLG")  # 0=mb, 1=height(m) w/ PS(1)=sfc pressure
+    pressure_flag = read_flag(
+        "IPSFLG"
+    )  # 0=mb, 1=height(m) w/ PS(1)=sfc pressure
     temperature_flag = read_flag("ITSFLG")  # 0=degC, 1=K, 2=theta(K)
-    moisture_flag = read_flag("IRTSFLG")  # 0/1=dewpt, 2=mixrat, 3=RH%, 4=dewpt depr.
-    wind_flag = read_flag("IUSFLG", default=0)  # 0=U/V components, else dir/speed
+    moisture_flag = read_flag(
+        "IRTSFLG"
+    )  # 0/1=dewpt, 2=mixrat, 3=RH%, 4=dewpt depr.
+    wind_flag = read_flag(
+        "IUSFLG", default=0
+    )  # 0=U/V components, else dir/speed
 
     if pressure_flag not in (0, 1):
         raise NotImplementedError(
@@ -430,7 +474,9 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
     # RAMS treats the first PS==0 entry as the end of the sounding; truncate
     # all fields to the number of real levels before that sentinel.
     end_of_sounding = np.where(pressure_mb == 0.0)[0]
-    n_levels = int(end_of_sounding[0]) if end_of_sounding.size else len(pressure_mb)
+    n_levels = (
+        int(end_of_sounding[0]) if end_of_sounding.size else len(pressure_mb)
+    )
     pressure_mb = pressure_mb[:n_levels]
     temperature_in = temperature_in[:n_levels]
     moisture_in = moisture_in[:n_levels]
@@ -458,7 +504,10 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
     else:
         # PS holds the surface pressure (mb) then heights (m); the input array
         # is named *pressure_mb* but here its tail entries are heights.
-        height_levels_m = pressure_mb
+        # Slot 0 holds surface *pressure*, so the surface *height* (z=0, as in
+        # the height integration below) must replace it for layer thicknesses.
+        height_levels_m = pressure_mb.copy()
+        height_levels_m[0] = 0.0
         # Virtual-temperature correction factor for the integration. RAMS only
         # applies it when moisture is supplied as a mixing ratio (IRTSFLG=2);
         # *moisture_in* is then in g/kg, hence the 1e-3.
@@ -471,19 +520,22 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
         temperature_offset = 273.15 if temperature_flag == 0 else 0.0
 
         pressure_pa = np.zeros(n_levels)
-        pressure_pa[0] = height_levels_m[0] * 100.0  # surface pressure mb -> Pa
+        pressure_pa[0] = pressure_mb[0] * 100.0  # surface pressure mb -> Pa
         for k in range(1, n_levels):
             # Layer thickness between successive input height levels.
             layer_thickness_m = height_levels_m[k] - height_levels_m[k - 1]
             if temperature_flag in (0, 1):
                 # Layer-mean (virtual) temperature in Kelvin from the TS inputs.
                 layer_mean_temperature = 0.5 * (
-                    (temperature_in[k] + temperature_offset) * virtual_correction[k]
+                    (temperature_in[k] + temperature_offset)
+                    * virtual_correction[k]
                     + (temperature_in[k - 1] + temperature_offset)
                     * virtual_correction[k - 1]
                 )
                 pressure_pa[k] = pressure_pa[k - 1] * np.exp(
-                    -g_val * layer_thickness_m / (R_d_val * layer_mean_temperature)
+                    -g_val
+                    * layer_thickness_m
+                    / (R_d_val * layer_mean_temperature)
                 )
             else:  # temperature_flag == 2: TS holds potential temperature
                 # Layer-mean (virtual) potential temperature.
@@ -553,7 +605,9 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
 
     if moisture_flag == 0:
         # Dew point in degrees Celsius.
-        mixing_ratio_kgkg = saturation_mixing_ratio(pressure_pa, moisture_in + 273.15)
+        mixing_ratio_kgkg = saturation_mixing_ratio(
+            pressure_pa, moisture_in + 273.15
+        )
     elif moisture_flag == 1:
         # Dew point in Kelvin.
         mixing_ratio_kgkg = saturation_mixing_ratio(pressure_pa, moisture_in)
@@ -563,7 +617,9 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
     elif moisture_flag == 3:
         # Relative humidity in percent: scale the saturation mixing ratio.
         mixing_ratio_kgkg = (
-            saturation_mixing_ratio(pressure_pa, temperature_k) * moisture_in * 0.01
+            saturation_mixing_ratio(pressure_pa, temperature_k)
+            * moisture_in
+            * 0.01
         )
     elif moisture_flag == 4:
         # Dew point depression in Kelvin (subtracted from temperature).
@@ -580,7 +636,9 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
     heights_m = np.zeros(n_levels)
     for k in range(1, n_levels):
         # Layer-mean virtual temperature across the (k-1, k) interval.
-        layer_mean_tv = 0.5 * (virtual_temperature_k[k] + virtual_temperature_k[k - 1])
+        layer_mean_tv = 0.5 * (
+            virtual_temperature_k[k] + virtual_temperature_k[k - 1]
+        )
         # Hypsometric thickness; pressure decreases upward so the log term is
         # negative, and the leading minus sign makes the height increase.
         heights_m[k] = (
@@ -612,7 +670,9 @@ def sounding_df_from_ramsin(ramsin: Union[PathLike, str]) -> pd.DataFrame:
     })
 
 
-def calculate_sounding_derived_vars(df, cape=True, cape_z_max=4000, cape_stride=1):
+def calculate_sounding_derived_vars(
+    df, cape=True, cape_z_max=4000, cape_stride=1
+):
     df = df.copy()
     # `RTS` is stored in the CM1/RAMS sense -- the plain mixing-ratio ratio
     # w / w_sat -- because that is how both models recover qv from a sounding
@@ -710,8 +770,12 @@ def calculate_sounding_derived_vars(df, cape=True, cape_z_max=4000, cape_stride=
     # Fill in the skipped (strided) starting levels by interpolation.
     if cape_stride > 1 and len(start_ixs) > 1:
         filled = np.arange(start_ixs[-1] + 1)
-        capes[: start_ixs[-1] + 1] = np.interp(filled, start_ixs, capes[start_ixs])
-        cins[: start_ixs[-1] + 1] = np.interp(filled, start_ixs, cins[start_ixs])
+        capes[: start_ixs[-1] + 1] = np.interp(
+            filled, start_ixs, capes[start_ixs]
+        )
+        cins[: start_ixs[-1] + 1] = np.interp(
+            filled, start_ixs, cins[start_ixs]
+        )
 
     df["cape"] = capes * units("J/kg")
     df["cin"] = cins * units("J/kg")
@@ -744,7 +808,9 @@ def _WK_DEFAULT_RH_CALCULATION(
     z,
     z_tropopause=_WK_DEFAULT_Z_TROPOPAUSE,
 ):
-    return np.where(z < z_tropopause, 1.0 - 0.75 * (z / z_tropopause) ** 1.25, 0.25)
+    return np.where(
+        z < z_tropopause, 1.0 - 0.75 * (z / z_tropopause) ** 1.25, 0.25
+    )
 
 
 def wk84_sounding(
@@ -846,7 +912,9 @@ def wk84_sounding(
     R_d_val = R_d.to("J/kg/K").magnitude
     g_val = mpconstants.g.to("m/s^2").magnitude
     q_v0_val = q_v0.to("kg/kg").magnitude
-    pi_sfc_val = float(pi_sfc.magnitude if hasattr(pi_sfc, "magnitude") else pi_sfc)
+    pi_sfc_val = float(
+        pi_sfc.magnitude if hasattr(pi_sfc, "magnitude") else pi_sfc
+    )
     theta_v_sfc_val = theta_v_sfc.to("K").magnitude
     zs_val = internal_zs.to("m").magnitude
     thetas_val = np.asarray(
@@ -866,9 +934,9 @@ def wk84_sounding(
             C_p_val * 0.5 * (theta_v_sfc_val + theta_vs[0])
         )
         for z_ix in range(1, len(zs_val)):
-            pis[z_ix] = pis[z_ix - 1] - g_val * (zs_val[z_ix] - zs_val[z_ix - 1]) / (
-                C_p_val * 0.5 * (theta_vs[z_ix] + theta_vs[z_ix - 1])
-            )
+            pis[z_ix] = pis[z_ix - 1] - g_val * (
+                zs_val[z_ix] - zs_val[z_ix - 1]
+            ) / (C_p_val * 0.5 * (theta_vs[z_ix] + theta_vs[z_ix - 1]))
         Ps_val = p0_Pa * (pis ** (C_p_val / R_d_val))
         # Re-attach units at the metpy call boundary; metpy uses its own
         # internal R_d / C_p / p0 which differ slightly from constants.py,
@@ -927,7 +995,9 @@ def wk84_sounding(
             "z": z_levels,
             "PS": np.interp(z_levels, internal_zs, Ps.to("hPa").magnitude),
             "TS": np.interp(z_levels, internal_zs, Ts.to("degC").magnitude),
-            "RTS": np.interp(z_levels, internal_zs, rhs * 100.0),  # frac → percent
+            "RTS": np.interp(
+                z_levels, internal_zs, rhs * 100.0
+            ),  # frac → percent
             "US": np.interp(z_levels, internal_zs, wk_U),
             "VS": np.interp(z_levels, internal_zs, wk_V),
         })
@@ -973,7 +1043,9 @@ def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000, axs=None):
         The matplotlib Figure containing the four panels.
     """
     if axs is None:
-        fig, axs = plt.subplots(ncols=2, nrows=2, figsize=(9, 9), layout="constrained")
+        fig, axs = plt.subplots(
+            ncols=2, nrows=2, figsize=(9, 9), layout="constrained"
+        )
     else:
         axs = np.asarray(axs).reshape(2, 2)
         fig = axs[0, 0].figure
@@ -982,7 +1054,7 @@ def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000, axs=None):
     # name, plot_sounding_skewt returns the parent Figure, not a SkewT object —
     # its component axes (the SkewX plot itself, plus the hodograph/wind-barb
     # inset) are recovered below via is_skewt() filtering skewt_fig.axes.
-    skewt_fig = plot_sounding_skewt(sounding_df, ax=axs[0, 0], barbs=False)
+    skewt_fig = plot_sounding_skewt(sounding_df, ax=axs[0, 0], wind='hodograph')
     skewt_ax = next(a for a in skewt_fig.axes if is_skewt(a))
     skewt_ax.set_title("Skew-T")
 
@@ -994,10 +1066,16 @@ def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000, axs=None):
     # Potential temperature profiles, with lapse rate on a shared-y twin axis
     theta_ax = axs[0, 1]
     theta_ax.set_title("Potential temperature")
-    theta_var_labels = {"theta": r"$\theta$", "theta_v": r"$\theta_v$", "theta_e": r"$\theta_e$"}
+    theta_var_labels = {
+        "theta": r"$\theta$",
+        "theta_v": r"$\theta_v$",
+        "theta_e": r"$\theta_e$",
+    }
     for column_name, legend_label in theta_var_labels.items():
         theta_ax.plot(
-            low_level_df[column_name].values, low_level_df["z"], label=legend_label
+            low_level_df[column_name].values,
+            low_level_df["z"],
+            label=legend_label,
         )
     theta_ax.set_ylabel("z (m)")
     theta_ax.set_xlabel("K")
@@ -1020,7 +1098,11 @@ def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000, axs=None):
     # CAPE/CIN
     cape_ax = axs[1, 0]
     for column_name in ["cape", "cin"]:
-        cape_ax.plot(low_level_df[column_name].values, low_level_df["z"], label=column_name)
+        cape_ax.plot(
+            low_level_df[column_name].values,
+            low_level_df["z"],
+            label=column_name,
+        )
     cape_ax.set_ylabel("z (m)")
     cape_ax.set_xlabel("J/kg")
     cape_ax.set_title("CAPE/CIN")
@@ -1031,12 +1113,16 @@ def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000, axs=None):
     moisture_ax = axs[1, 1]
     moisture_ax.set_title("Moisture")
     qv_color, rh_color = get_nth_color(0), get_nth_color(1)
-    moisture_ax.plot(low_level_df["q_v"], low_level_df["z"], color=qv_color, label=r"$q_v$")
+    moisture_ax.plot(
+        low_level_df["q_v"], low_level_df["z"], color=qv_color, label=r"$q_v$"
+    )
     moisture_ax.set_ylabel("z (m)")
     moisture_ax.set_xlabel(r"$q_v$ (g/kg)", color=qv_color)
     moisture_ax.tick_params(axis="x", colors=qv_color)
     rh_ax = moisture_ax.twiny()
-    rh_ax.plot(low_level_df["RTS"], low_level_df["z"], color=rh_color, label="RH")
+    rh_ax.plot(
+        low_level_df["RTS"], low_level_df["z"], color=rh_color, label="RH"
+    )
     rh_ax.set_xlabel("RH (%)", color=rh_color)
     rh_ax.tick_params(axis="x", colors=rh_color)
 
@@ -1051,13 +1137,19 @@ def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000, axs=None):
     lcl_pressure_hpa = np.interp(
         lcl_height_m, sounding_df["z"].values, sounding_df["PS"].values
     )
-    skewt_ax.axhline(lcl_pressure_hpa, linestyle="dotted", color="skyblue", alpha=0.6)
+    skewt_ax.axhline(
+        lcl_pressure_hpa, linestyle="dotted", color="skyblue", alpha=0.6
+    )
     for height_axis_ax in [theta_ax, cape_ax, moisture_ax]:
-        height_axis_ax.axhline(lcl_height_m, linestyle="dotted", color="skyblue", alpha=0.6)
+        height_axis_ax.axhline(
+            lcl_height_m, linestyle="dotted", color="skyblue", alpha=0.6
+        )
     # Zero-length proxy artist so "LCL" appears in the theta panel's legend below
     # (the only panel with a full legend box, since moisture uses colored labels
     # instead and CAPE/CIN's legend is built separately via clean_legend).
-    theta_ax.plot([], [], linestyle="dotted", color="skyblue", alpha=0.6, label="LCL")
+    theta_ax.plot(
+        [], [], linestyle="dotted", color="skyblue", alpha=0.6, label="LCL"
+    )
 
     # The lapse-rate scatter on the twinned axis covers nearly the full height
     # and width of this panel, so "best" placement (which only weighs theta_ax's
@@ -1070,7 +1162,9 @@ def plot_sounding_diagnostics(sounding_df, ll_z_cutoff=4000, axs=None):
     ambient_legend_fontsize = font_manager.FontProperties(
         size=plt.rcParams["legend.fontsize"]
     ).get_size_in_points()
-    theta_legend_handles, theta_legend_labels = theta_ax.get_legend_handles_labels()
+    theta_legend_handles, theta_legend_labels = (
+        theta_ax.get_legend_handles_labels()
+    )
     theta_ax.legend(
         handles=theta_legend_handles + [lapse_rate_line],
         labels=theta_legend_labels + ["lapse rate"],
@@ -1098,7 +1192,9 @@ def plot_base_state_diagnostics(bs_ds):
     lcl = bs_df.iloc[0]["lcl"]
 
     # Always do sounding diagnostics
-    fig, axs = plt.subplots(ncols=2, nrows=3, figsize=(9, 13), layout="constrained")
+    fig, axs = plt.subplots(
+        ncols=2, nrows=3, figsize=(9, 13), layout="constrained"
+    )
     plot_sounding_diagnostics(bs_df, axs=axs[:2, :])
 
     # Do CCN if present

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xarrams"
-version = "1.0.0"
+version = "1.1.0"
 description = "Utilities for working with RAMS atmospheric model output"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "carlee-tools>=1.1.0",
+    "carlee-tools>=2.0.0",
     "xarray",
     "numpy",
     "pandas",
@@ -34,16 +34,14 @@ dependencies = [
     "pint",
     "tqdm",
     "matplotlib",
+    "jinja2",
+    "h5netcdf",
+    # Decodes ZFP-compressed RAMS output (imported for its side effect in io.py)
+    "hdf5plugin",
+    "dask",
 ]
 
 [project.optional-dependencies]
-dask = [
-    "dask",
-    "h5netcdf",
-]
-build = [
-    "jinja2",
-]
 dev = [
     "pytest>=7.0",
     "pytest-cov",

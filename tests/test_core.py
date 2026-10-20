@@ -302,8 +302,24 @@ class TestGenerateRamsin:
     def test_basic_generation(self, tmp_path):
         from xarrams import generate_ramsin
 
+        # generate_ramsin always fills in TOPFILES/SFCFILES/SSTFPFX/NDVIFPFX
+        # (from rams_input_dir) and AFILEPREF (from rams_output_dir) unless
+        # they're already in `parameters`, so a template exercising it needs
+        # a $MODEL_FILE_INFO block with all five, like a real RAMSIN would.
         template = tmp_path / "RAMSIN.template"
-        template.write_text("$MODEL_GRIDS\n TIMMAX = 3600.,\n NNXP = 100,\n$END\n")
+        template.write_text(
+            "$MODEL_GRIDS\n"
+            " TIMMAX = 3600.,\n"
+            " NNXP = 100,\n"
+            "$END\n"
+            "$MODEL_FILE_INFO\n"
+            " TOPFILES = 'x',\n"
+            " SFCFILES = 'x',\n"
+            " SSTFPFX = 'x',\n"
+            " NDVIFPFX = 'x',\n"
+            " AFILEPREF = 'x',\n"
+            "$END\n"
+        )
         result = generate_ramsin(
             ramsin_name="test",
             parameters={"TIMMAX": "7200."},
@@ -312,8 +328,9 @@ class TestGenerateRamsin:
             rams_run_dir=tmp_path,
             ramsin_template_path=template,
         )
-        assert "7200." in result
-        assert (tmp_path / "RAMSIN.test").exists()
+        # generate_ramsin returns the written RAMSIN's path, not its text.
+        assert result == tmp_path / "RAMSIN.test"
+        assert "7200." in result.read_text()
 
     def test_missing_field_raises(self, tmp_path):
         from xarrams import generate_ramsin
@@ -521,3 +538,30 @@ class TestWK84SoundingAgainstCM1:
         # everywhere is the physically meaningful bound.
         abs_err = np.abs(diff)
         assert abs_err.max() < 1.0, f"max |dRH| = {abs_err.max():.4g} %"
+
+
+def test_sounding_df_from_ramsin_height_levels_start_at_surface():
+    """IPSFLG=1: PS(1) is surface pressure (mb), PS(2..) are heights (m).
+
+    Regression test: the surface pressure used to be treated as the surface
+    height, which gave negative heights and wrong hydrostatic pressures.
+    """
+    from xarrams import sounding_df_from_ramsin
+
+    ramsin_text = """
+ $MODEL_SOUND
+   IPSFLG = 1,
+   ITSFLG = 2,
+   IRTSFLG = 2,
+   IUSFLG = 0,
+   PS = 1000., 100., 200., 0.,
+   TS = 300., 300., 300., 0.,
+   RTS = 10., 10., 10., 0.,
+   US = 1., 1., 1., 0.,
+   VS = 0., 0., 0., 0.,
+ $END
+"""
+    sounding = sounding_df_from_ramsin(ramsin_text)
+    assert list(sounding["z"].round(1)) == [0.0, 100.0, 200.0]
+    assert sounding["PS"].is_monotonic_decreasing
+    assert sounding["PS"].iloc[0] == 1000.0

@@ -9,7 +9,7 @@ from importlib.metadata import version, PackageNotFoundError
 try:
     __version__ = version("xarrams")
 except PackageNotFoundError:
-    __version__ = "1.0.0"  # fallback for editable / non-installed usage
+    __version__ = "1.1.0"  # fallback for editable / non-installed usage
 
 # --- Constants ---------------------------------------------------------------
 from .constants import (

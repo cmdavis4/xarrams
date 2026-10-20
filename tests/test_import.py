@@ -72,7 +72,6 @@ def test_constant_imports():
         HYDROMETEOR_SPECIES_FULL_NAMES,
         RAMS_ANALYSIS_FILE_DIMENSIONS_DICT,
         RAMS_FILENAME_DT_STRFTIME_FORMAT,
-        RAMS_DT_STRFTIME_STR,
         RAMS_FILENAME_DT_REGEX,
         RAMS_VARIABLES_DF,
         SOUNDING_NAMELIST_VARIABLES,
@@ -80,7 +79,6 @@ def test_constant_imports():
     )
 
     assert isinstance(RAMS_FILENAME_DT_STRFTIME_FORMAT, str)
-    assert RAMS_DT_STRFTIME_STR == RAMS_FILENAME_DT_STRFTIME_FORMAT
     assert isinstance(RAMS_FILENAME_DT_REGEX, str)
     assert isinstance(RAMS_ANALYSIS_FILE_DIMENSIONS_DICT, dict)
     assert isinstance(DEFAULT_BSR_VARIABLES, list)
